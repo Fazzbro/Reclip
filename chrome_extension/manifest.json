@@ -1,0 +1,1 @@
+{ "manifest_version": 3, "name": "ReClip Cookie Exporter", "version": "1.0", "description": "Exports YouTube cookies for ReClip", "action": { "default_popup": "popup.html", "default_icon": { "128": "icon.png" } }, "permissions": ["cookies", "downloads"], "host_permissions": ["*://*.youtube.com/*"], "icons": { "128": "icon.png" } }

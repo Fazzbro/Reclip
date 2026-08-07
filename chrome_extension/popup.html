@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      width: 250px;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f4f1eb;
+      color: #3a3a38;
+      margin: 0;
+      text-align: center;
+    }
+    h2 { margin-top: 0; font-size: 1.2rem; color: #e85d2a; }
+    p { font-size: 0.85rem; margin-bottom: 16px; color: #9c9889; }
+    button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      background: #e85d2a;
+      color: white;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      width: 100%;
+      transition: background 0.2s;
+    }
+    button:hover { background: #d04e1f; }
+    #status { margin-top: 12px; font-size: 0.8rem; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h2>ReClip Exporter</h2>
+  <p>Extract YouTube cookies to bypass Chrome security.</p>
+  <button id="exportBtn">Export cookies.txt</button>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
