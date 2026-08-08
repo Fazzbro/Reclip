@@ -4,7 +4,23 @@ import socket
 import threading
 import time
 import webview
-from app import app, DOWNLOAD_DIR
+from app import app, get_download_dir, set_download_dir
+
+class Api:
+    def get_current_dir(self):
+        return get_download_dir()
+
+    def choose_folder(self):
+        try:
+            window = webview.windows[0]
+            result = window.create_file_dialog(webview.FOLDER_DIALOG, directory=get_download_dir())
+            if result and len(result) > 0:
+                set_download_dir(result[0])
+                return result[0]
+            return None
+        except Exception as e:
+            print("Dialog error:", e)
+            return None
 
 def find_free_port():
     """Find a free port on localhost."""
@@ -31,6 +47,7 @@ def main():
 
     icon_path = os.path.join(os.path.dirname(__file__), "static", "logo.png")
     
+    api = Api()
     # Create pywebview window
     window = webview.create_window(
         title="ReClip — Media Downloader",
@@ -39,7 +56,8 @@ def main():
         height=860,
         min_size=(640, 720),
         resizable=True,
-        text_select=True
+        text_select=True,
+        js_api=api
     )
 
     # Start native WebView window engine

@@ -413,10 +413,16 @@
             <p style="margin-top: 4px;">Free media downloader</p>
           </div>
         </div>
-        <button class="open-folder-btn" onclick="openDownloadsFolder()" title="Open Downloads Folder">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px; vertical-align: -2px;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-          Downloads Folder
-        </button>
+        <div style="display: flex; gap: 8px;">
+          <button class="open-folder-btn" onclick="chooseFolder()" title="Change Download Location">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px; vertical-align: -2px;"><path d="M21.2 8.4c.5.38.8.97.8 1.6v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.83a2 2 0 0 1 1.69.9l1.92 2.8c.2.28.52.46.86.46H18a2 2 0 0 1 2 2v2.2z"/></svg>
+            Change
+          </button>
+          <button class="open-folder-btn" onclick="openDownloadsFolder()" title="Open Downloads Folder">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px; vertical-align: -2px;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+            Open
+          </button>
+        </div>
       </div>
     </div>
 
@@ -464,6 +470,17 @@
         await fetch('/api/open-downloads', { method: 'POST' });
       } catch (e) {
         console.error('Failed to open downloads folder', e);
+      }
+    }
+
+    async function chooseFolder() {
+      if (window.pywebview && window.pywebview.api) {
+        const newDir = await window.pywebview.api.choose_folder();
+        if (newDir) {
+           console.log("Download directory updated to:", newDir);
+        }
+      } else {
+        alert("Choosing a custom folder is only supported in the Windows Desktop app.");
       }
     }
 

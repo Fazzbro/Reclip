@@ -8,10 +8,46 @@ import threading
 from flask import Flask, request, jsonify, send_file, render_template
 
 app = Flask(__name__)
-DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), "downloads")
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
 import sys
+
+def get_config_path():
+    if getattr(sys, 'frozen', False):
+        return os.path.join(os.path.dirname(sys.executable), "reclip_config.json")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "reclip_config.json")
+
+def get_download_dir():
+    config_path = get_config_path()
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                config = json.load(f)
+                d = config.get("download_dir")
+                if d and os.path.exists(d):
+                    return d
+        except:
+            pass
+    
+    if getattr(sys, 'frozen', False):
+        default_dir = os.path.join(os.path.dirname(sys.executable), "downloads")
+    else:
+        default_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
+    
+    os.makedirs(default_dir, exist_ok=True)
+    return default_dir
+
+def set_download_dir(path):
+    config_path = get_config_path()
+    config = {}
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                config = json.load(f)
+        except:
+            pass
+    config["download_dir"] = path
+    with open(config_path, "w") as f:
+        json.dump(config, f)
+
 
 if getattr(sys, 'frozen', False):
     base_path = sys._MEIPASS
@@ -28,7 +64,7 @@ if not os.path.exists(YTDLP_BIN):
         YTDLP_BIN = "yt-dlp"
         
 # DEBUG: Log the resolved path so we know exactly what is executing
-with open(os.path.join(DOWNLOAD_DIR, "reclip_debug.log"), "a") as f:
+with open(os.path.join(get_download_dir(), "reclip_debug.log"), "a") as f:
     f.write(f"Resolved YTDLP_BIN: {YTDLP_BIN} (exists: {os.path.exists(YTDLP_BIN)})\n")
 
 # Prevent terminal window creation during subprocess calls on Windows
@@ -81,7 +117,7 @@ if not os.path.exists(NODE_BIN):
     NODE_BIN = "node"
 
 # DEBUG: Log the resolved Node path
-with open(os.path.join(DOWNLOAD_DIR, "reclip_debug.log"), "a") as f:
+with open(os.path.join(get_download_dir(), "reclip_debug.log"), "a") as f:
     f.write(f"Resolved NODE_BIN: {NODE_BIN} (exists: {os.path.exists(NODE_BIN)})\n")
 
 def normalize_url(url):
@@ -106,7 +142,7 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser=""):
     job["progress_str"] = "Downloading..."
     job["filesize"] = ""
     url = normalize_url(url)
-    out_template = os.path.join(DOWNLOAD_DIR, f"{job_id}.%(ext)s")
+    out_template = os.path.join(get_download_dir(), f"{job_id}.%(ext)s")
 
     cmd = [
         YTDLP_BIN,
@@ -121,7 +157,7 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser=""):
         "-o", out_template
     ]
 
-    cookies_txt_path = os.path.join(DOWNLOAD_DIR, "cookies.txt")
+    cookies_txt_path = os.path.join(get_download_dir(), "cookies.txt")
     if os.path.exists(cookies_txt_path):
         cmd += ["--cookies", cookies_txt_path]
     elif cookies_browser:
@@ -190,7 +226,7 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser=""):
                 job["error"] = error_msg
             return
 
-        files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{job_id}.*"))
+        files = glob.glob(os.path.join(get_download_dir(), f"{job_id}.*"))
         if not files:
             job["status"] = "error"
             job["error"] = "Download completed but no file was found"
@@ -256,7 +292,7 @@ def get_info():
         "--add-header", f"X-Forwarded-For: {get_random_ip()}",
         "-j"
     ]
-    cookies_txt_path = os.path.join(DOWNLOAD_DIR, "cookies.txt")
+    cookies_txt_path = os.path.join(get_download_dir(), "cookies.txt")
     if os.path.exists(cookies_txt_path):
         cmd += ["--cookies", cookies_txt_path]
     elif cookies:
@@ -484,12 +520,13 @@ def download_file(job_id):
 def open_downloads():
     try:
         import sys
+        dl_dir = get_download_dir()
         if os.name == "nt":
-            os.startfile(DOWNLOAD_DIR)
+            os.startfile(dl_dir)
         elif sys.platform == "darwin":
-            subprocess.run(["open", DOWNLOAD_DIR], creationflags=CREATION_FLAGS)
+            subprocess.run(["open", dl_dir], creationflags=CREATION_FLAGS)
         else:
-            subprocess.run(["xdg-open", DOWNLOAD_DIR], creationflags=CREATION_FLAGS)
+            subprocess.run(["xdg-open", dl_dir], creationflags=CREATION_FLAGS)
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
