@@ -325,6 +325,7 @@ def get_info():
             "duration": info.get("duration"),
             "uploader": info.get("uploader", ""),
             "filesize": filesize_str,
+            "audio_filesize": format_size(best_audio_size) if best_audio_size else "",
             "formats": formats,
         })
     except subprocess.TimeoutExpired:

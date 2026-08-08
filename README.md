@@ -28,7 +28,7 @@
 ## 💾 Downloads & Installation
 
 ### Windows Desktop (.exe)
-1. Download **`ReClip_v1.1.6_Setup.exe`** from [GitHub Releases](https://github.com/Fazzbro/reclip/releases/tag/v1.1.6) and run the installer.
+1. Download **`ReClip_v1.1.7_Setup.exe`** from [GitHub Releases](https://github.com/Fazzbro/Reclip/releases/tag/v1.1.7) and run the installer.
 2. Alternatively, launch `dist/ReClip/ReClip.exe` directly.
 
 ---

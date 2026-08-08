@@ -560,6 +560,7 @@
               duration: data.duration,
               uploader: data.uploader || '',
               filesize: data.filesize || '',
+              audio_filesize: data.audio_filesize || '',
               formats: data.formats || [],
               selectedFormatId: data.formats?.[0]?.id || null,
             };
@@ -633,13 +634,13 @@
       }
 
       let qualityChips = '';
-      let currentFilesize = c.filesize; // default size
+      let currentFilesize = isAudio ? c.audio_filesize || '' : c.filesize; // default size
       if (!isAudio && c.formats && c.formats.length >= 1) {
         qualityChips = c.formats.map(f =>
           `<button class="q-chip${f.id === c.selectedFormatId ? ' active' : ''}" onclick="pickFormat(${idx}, '${f.id}')">${f.label}</button>`
         ).join('');
         const selFmt = c.formats.find(f => f.id === c.selectedFormatId);
-        if (selFmt && selFmt.filesize) currentFilesize = selFmt.filesize;
+        if (selFmt) currentFilesize = selFmt.filesize;
       }
 
       let actionHtml = '';
