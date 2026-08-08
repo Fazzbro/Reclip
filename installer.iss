@@ -1,6 +1,6 @@
 ; Script generated for ReClip Media Downloader using Inno Setup
 #define MyAppName "ReClip"
-#define MyAppVersion "1.1.8"
+#define MyAppVersion "1.1.9"
 #define MyAppPublisher "Fazzbro"
 #define MyAppURL "https://github.com/Fazzbro/reclip"
 #define MyAppExeName "ReClip.exe"
@@ -17,7 +17,7 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-OutputBaseFilename=ReClip_v1.1.8_Setup
+OutputBaseFilename=ReClip_v{#MyAppVersion}_Setup
 OutputDir=.
 
 SetupIconFile=app_icon.ico
