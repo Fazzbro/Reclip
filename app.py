@@ -288,6 +288,11 @@ def get_info():
         for f in info.get("formats", []):
             if f.get("acodec") != "none" and f.get("vcodec") == "none":
                 s = f.get("filesize_approx") or f.get("filesize") or 0
+                if not s:
+                    abr = f.get("abr") or f.get("tbr")
+                    duration = info.get("duration")
+                    if abr and duration:
+                        s = (abr * 1024 / 8) * duration
                 if s > best_audio_size:
                     best_audio_size = s
 
@@ -295,6 +300,12 @@ def get_info():
         for height in sorted(best_by_height.keys(), reverse=True):
             f = best_by_height[height]
             v_size = f.get("filesize_approx") or f.get("filesize") or 0
+            if not v_size:
+                vbr = f.get("vbr") or f.get("tbr")
+                duration = info.get("duration")
+                if vbr and duration:
+                    v_size = (vbr * 1024 / 8) * duration
+            
             total_size = v_size + best_audio_size if (v_size and best_audio_size) else 0
             filesize_str = format_size(total_size) if total_size else ""
             formats.append({
@@ -318,6 +329,9 @@ def get_info():
 
         approx_size = info.get("filesize_approx") or info.get("filesize")
         filesize_str = format_size(approx_size) if approx_size else ""
+        
+        if formats and not formats[0]["filesize"] and approx_size:
+            formats[0]["filesize"] = filesize_str
 
         return jsonify({
             "title": info.get("title", ""),
