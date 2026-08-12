@@ -6,6 +6,8 @@
   **A sleek, native Windows desktop application for media downloading.**  
   Download videos and audio from YouTube, TikTok, Instagram, Twitter/X, and 1000+ other sites in MP4 or MP3 format with real-time progress indicators and file size estimation.
 
+  <img src="assets/screenshot.png" alt="ReClip Screenshot" width="800">
+
   ![Platforms](https://img.shields.io/badge/platforms-Windows-red)
   ![Python](https://img.shields.io/badge/python-3.10+-blue)
   ![License](https://img.shields.io/badge/license-MIT-green)
