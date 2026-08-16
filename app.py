@@ -174,7 +174,7 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser="", audi
     url = normalize_url(url)
     dl_dir = get_download_dir()
     os.makedirs(dl_dir, exist_ok=True)
-    out_template = os.path.join(dl_dir, f"{job_id}.%(ext)s")
+    out_template = os.path.join(dl_dir, f"{job_id}___%(title).140B.%(ext)s")
 
     cmd = [
         YTDLP_BIN,
@@ -296,7 +296,7 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser="", audi
 
         files = [
             os.path.join(dl_dir, f) for f in all_dl_files
-            if f.startswith(f"{job_id}.") and not f.endswith(".part") and not f.endswith(".ytdl") and not f.endswith(".temp")
+            if f.startswith(f"{job_id}") and not f.endswith(".part") and not f.endswith(".ytdl") and not f.endswith(".temp")
         ]
 
         if not files:
@@ -320,19 +320,54 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser="", audi
                 except OSError:
                     pass
 
-        actual_size = os.path.getsize(chosen)
+        # Extract title from the file or caller metadata
+        chosen_basename = os.path.basename(chosen)
+        ext = os.path.splitext(chosen)[1]
+
+        if "___" in chosen_basename:
+            extracted_title = chosen_basename.split("___", 1)[1]
+            extracted_title = os.path.splitext(extracted_title)[0]
+        else:
+            extracted_title = os.path.splitext(chosen_basename)[0]
+
+        def sanitize_filename(name):
+            if not name:
+                return ""
+            clean = re.sub(r'[\\/*?:"<>|]', "", name).strip()
+            clean = re.sub(r'\s+', " ", clean).strip()
+            return clean[:120].strip()
+
+        user_title = sanitize_filename(job.get("title", ""))
+        video_title = user_title or sanitize_filename(extracted_title) or f"ReClip_Video_{job_id}"
+
+        target_filename = f"{video_title}{ext}"
+        target_path = os.path.join(dl_dir, target_filename)
+
+        # Handle collisions if target file already exists in Downloads folder
+        if os.path.exists(target_path) and os.path.abspath(target_path) != os.path.abspath(chosen):
+            count = 1
+            while os.path.exists(os.path.join(dl_dir, f"{video_title} ({count}){ext}")):
+                count += 1
+            target_filename = f"{video_title} ({count}){ext}"
+            target_path = os.path.join(dl_dir, target_filename)
+
+        # Rename disk file to the human-readable title!
+        try:
+            if os.path.abspath(chosen) != os.path.abspath(target_path):
+                os.replace(chosen, target_path)
+            final_file = target_path
+            final_filename = target_filename
+        except Exception:
+            final_file = chosen
+            final_filename = os.path.basename(chosen)
+
+        actual_size = os.path.getsize(final_file)
         job["status"] = "done"
         job["percent"] = 100.0
         job["filesize"] = format_size(actual_size)
         job["progress_str"] = "Completed"
-        job["file"] = chosen
-        ext = os.path.splitext(chosen)[1]
-        title = job.get("title", "").strip()
-        if title:
-            safe_title = "".join(c for c in title if c not in r'\/:*?"<>|').strip()[:100].strip()
-            job["filename"] = f"{safe_title}{ext}" if safe_title else os.path.basename(chosen)
-        else:
-            job["filename"] = os.path.basename(chosen)
+        job["file"] = final_file
+        job["filename"] = final_filename
     except subprocess.TimeoutExpired:
         job["status"] = "error"
         job["error"] = "Download timed out (5 min limit)"
