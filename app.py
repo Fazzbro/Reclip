@@ -10,6 +10,13 @@ from flask import Flask, request, jsonify, send_file, render_template
 app = Flask(__name__)
 import sys
 
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    return response
+
 def get_config_path():
     if getattr(sys, 'frozen', False):
         return os.path.join(os.path.dirname(sys.executable), "reclip_config.json")
