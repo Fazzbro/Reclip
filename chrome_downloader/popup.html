@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: sans-serif; padding: 15px; width: 220px; }
+    h3 { margin-top: 0; color: #e04a32; }
+    select { width: 100%; padding: 5px; margin-bottom: 10px; }
+    button { width: 100%; padding: 8px; background: #e04a32; color: white; border: none; cursor: pointer; border-radius: 4px; }
+    button:hover { background: #d03920; }
+  </style>
+</head>
+<body>
+  <h3>ReClip Downloader</h3>
+  <label for="quality">Default Quality:</label>
+  <select id="quality">
+    <option value="1080">1080p</option>
+    <option value="720">720p</option>
+    <option value="480">480p</option>
+    <option value="audio">Audio Only (MP3)</option>
+  </select>
+  <button id="save">Save Settings</button>
+  <div id="status" style="margin-top: 5px; font-size: 12px; color: green; text-align: center;"></div>
+  
+  <div style="margin-top: 15px; font-size: 11px; color: #666;">
+    Note: The ReClip application or background server must be running on your computer for downloads to work.
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

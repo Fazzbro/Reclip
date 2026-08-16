@@ -38,7 +38,7 @@ def run_flask(port):
     app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False)
 
 def main():
-    port = find_free_port()
+    port = 8899
     server_thread = threading.Thread(target=run_flask, args=(port,), daemon=True)
     server_thread.start()
 
