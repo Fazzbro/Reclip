@@ -1,35 +1,36 @@
-/* ReClip YouTube Thumbnail Button */
+/* ReClip Downloader Stylesheet v1.2.0 */
+
+/* 1. YouTube Thumbnail Badge */
 .reclip-yt-btn {
   position: absolute !important;
-  top: 6px !important;
-  left: 6px !important;
-  z-index: 999999 !important;
+  top: 8px !important;
+  left: 8px !important;
+  z-index: 9999999 !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
   background: #e04a32 !important;
   color: #ffffff !important;
-  font-family: Roboto, Arial, sans-serif !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
   font-size: 11px !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
   line-height: 1 !important;
   padding: 5px 8px !important;
-  border-radius: 6px !important;
-  border: 1px solid rgba(255, 255, 255, 0.25) !important;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6) !important;
+  border-radius: 5px !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.75) !important;
   cursor: pointer !important;
   pointer-events: auto !important;
-  text-decoration: none !important;
   user-select: none !important;
-  transition: all 0.2s ease-in-out !important;
   opacity: 0.95 !important;
+  transition: transform 0.15s ease, background 0.15s ease, opacity 0.15s ease !important;
 }
 
 .reclip-yt-btn:hover {
   background: #c53822 !important;
-  transform: scale(1.06) !important;
+  transform: scale(1.08) !important;
   opacity: 1 !important;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.7) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.85) !important;
 }
 
 .reclip-yt-btn.reclip-success {
@@ -40,14 +41,14 @@
   background: #ef4444 !important;
 }
 
-/* ReClip YouTube Watch Page Button */
+/* 2. YouTube Watch Page Action Bar Button */
 .reclip-yt-watch-btn {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
   background: rgba(224, 74, 50, 0.15) !important;
   color: #e04a32 !important;
-  font-family: Roboto, Arial, sans-serif !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
   font-size: 13px !important;
   font-weight: 600 !important;
   padding: 0 14px !important;
@@ -56,6 +57,7 @@
   border: 1px solid rgba(224, 74, 50, 0.4) !important;
   cursor: pointer !important;
   margin-right: 8px !important;
+  user-select: none !important;
   transition: all 0.2s ease !important;
 }
 
@@ -65,8 +67,8 @@
   border-color: #e04a32 !important;
 }
 
-/* ReClip Twitter/X Button */
-.reclip-download-btn-x {
+/* 3. Twitter / X Action Bar Button */
+.reclip-x-btn {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
@@ -74,14 +76,16 @@
   color: #71767b !important;
   border: none !important;
   cursor: pointer !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
   font-size: 13px !important;
   font-weight: 600 !important;
   padding: 4px 8px !important;
   border-radius: 9999px !important;
+  user-select: none !important;
   transition: all 0.2s ease !important;
 }
 
-.reclip-download-btn-x:hover {
+.reclip-x-btn:hover {
   color: #e04a32 !important;
   background: rgba(224, 74, 50, 0.1) !important;
 }

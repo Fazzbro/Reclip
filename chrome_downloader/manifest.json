@@ -1,15 +1,17 @@
 {
   "manifest_version": 3,
-  "name": "ReClip YouTube & X Downloader",
-  "version": "1.0",
-  "description": "Seamlessly download YouTube and Twitter/X videos directly to your ReClip application.",
-  "permissions": ["storage"],
+  "name": "ReClip Downloader",
+  "version": "1.2.0",
+  "description": "Download YouTube and X/Twitter videos directly into ReClip with one click.",
+  "permissions": [
+    "storage"
+  ],
   "host_permissions": [
     "*://*.youtube.com/*",
     "*://*.x.com/*",
     "*://*.twitter.com/*",
-    "*://127.0.0.1/*",
-    "*://localhost/*"
+    "http://127.0.0.1:8899/*",
+    "http://localhost:8899/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -18,12 +20,14 @@
     {
       "matches": ["*://*.youtube.com/*"],
       "js": ["content_youtube.js"],
-      "css": ["style.css"]
+      "css": ["style.css"],
+      "run_at": "document_idle"
     },
     {
       "matches": ["*://*.x.com/*", "*://*.twitter.com/*"],
       "js": ["content_x.js"],
-      "css": ["style.css"]
+      "css": ["style.css"],
+      "run_at": "document_idle"
     }
   ],
   "action": {

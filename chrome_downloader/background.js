@@ -1,3 +1,5 @@
+// ReClip Extension Background Service Worker v1.2.0
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'download') {
     chrome.storage.sync.get(['formatId'], (result) => {
@@ -12,33 +14,35 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         title: ''
       };
 
+      console.log('[ReClip Extension] Dispatching download:', payload);
+
       fetch('http://127.0.0.1:8899/api/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
       .then(res => {
-        if (!res.ok) throw new Error('Local server returned ' + res.status);
+        if (!res.ok) throw new Error('ReClip server HTTP error: ' + res.status);
         return res.json();
       })
       .then(data => {
         if (data.error) {
-          console.error('ReClip Error:', data.error);
+          console.error('[ReClip Extension] Server returned error:', data.error);
           sendResponse({ success: false, error: data.error });
         } else {
-          // Download has started in ReClip
+          console.log('[ReClip Extension] Download initiated with job:', data.job_id);
           sendResponse({ success: true, job_id: data.job_id });
         }
       })
       .catch(err => {
-        console.error('Fetch error:', err);
+        console.error('[ReClip Extension] Connection error:', err);
         sendResponse({ 
           success: false, 
-          error: 'Could not connect to ReClip. Is the ReClip app or background server running?' 
+          error: 'Could not connect to ReClip on http://127.0.0.1:8899. Please make sure the ReClip application is running!' 
         });
       });
     });
     
-    return true; 
+    return true; // Keep message channel open for async response
   }
 });

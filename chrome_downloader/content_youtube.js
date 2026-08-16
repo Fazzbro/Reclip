@@ -1,9 +1,57 @@
-function createThumbnailButton(getUrlFn) {
-  const btn = document.createElement('button');
+// ReClip YouTube Content Script v1.2.0
+
+function extractVideoUrl(container) {
+  // 1. Direct anchor with watch/shorts
+  if (container.tagName === 'A') {
+    const h = container.getAttribute('href') || container.href;
+    if (h && (h.includes('/watch') || h.includes('/shorts/'))) {
+      return h.startsWith('http') ? h : 'https://www.youtube.com' + h;
+    }
+  }
+
+  // 2. Look for inner anchor
+  const inner = container.querySelector('a[href*="/watch"], a[href*="/shorts/"]');
+  if (inner) {
+    const h = inner.getAttribute('href') || inner.href;
+    if (h) return h.startsWith('http') ? h : 'https://www.youtube.com' + h;
+  }
+
+  // 3. Look in parent card / view-model
+  const parentCard = container.closest('yt-lockup-view-model, ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-rich-grid-media');
+  if (parentCard) {
+    const cardLink = parentCard.querySelector('a#video-title-link, a#video-title, a.yt-lockup-view-model__content-image, a[href*="/watch"], a[href*="/shorts/"]');
+    if (cardLink) {
+      const h = cardLink.getAttribute('href') || cardLink.href;
+      if (h) return h.startsWith('http') ? h : 'https://www.youtube.com' + h;
+    }
+  }
+
+  return null;
+}
+
+function attachButtonToContainer(container) {
+  if (container.querySelector('.reclip-yt-btn') || container.classList.contains('reclip-injected-done')) {
+    return;
+  }
+  container.classList.add('reclip-injected-done');
+
+  // Ensure positioning context
+  try {
+    const pos = window.getComputedStyle(container).position;
+    if (!pos || pos === 'static') {
+      container.style.setProperty('position', 'relative', 'important');
+    }
+  } catch (e) {
+    container.style.position = 'relative';
+  }
+
+  const btn = document.createElement('div');
   btn.className = 'reclip-yt-btn';
+  btn.setAttribute('role', 'button');
+  btn.setAttribute('tabindex', '0');
   btn.title = 'Download with ReClip';
   btn.innerHTML = `
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:middle; margin-right:4px;">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:middle; margin-right:3px;">
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
       <polyline points="7 10 12 15 17 10"></polyline>
       <line x1="12" y1="15" x2="12" y2="3"></line>
@@ -11,25 +59,23 @@ function createThumbnailButton(getUrlFn) {
     <span>ReClip</span>
   `;
 
-  btn.addEventListener('click', (e) => {
+  const triggerDownload = (e) => {
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
 
-    const rawUrl = typeof getUrlFn === 'function' ? getUrlFn() : getUrlFn;
-    if (!rawUrl) {
-      alert('Could not detect video URL.');
+    const videoUrl = extractVideoUrl(container);
+    if (!videoUrl) {
+      alert('ReClip: Could not detect video link from this thumbnail.');
       return;
     }
-
-    const fullUrl = rawUrl.startsWith('http') ? rawUrl : 'https://www.youtube.com' + rawUrl;
 
     const span = btn.querySelector('span');
     const originalText = span ? span.innerText : 'ReClip';
     if (span) span.innerText = 'Downloading...';
     btn.style.opacity = '0.7';
 
-    chrome.runtime.sendMessage({ action: 'download', url: fullUrl }, (response) => {
+    chrome.runtime.sendMessage({ action: 'download', url: videoUrl }, (response) => {
       btn.style.opacity = '1';
       if (response && response.success) {
         if (span) span.innerText = 'Started!';
@@ -41,52 +87,51 @@ function createThumbnailButton(getUrlFn) {
       } else {
         if (span) span.innerText = 'Failed';
         btn.classList.add('reclip-error');
-        alert('ReClip Error: ' + (response?.error || 'Make sure the ReClip application is running on port 8899!'));
+        alert('ReClip Error: ' + (response?.error || 'Make sure ReClip desktop app is open on port 8899!'));
         setTimeout(() => {
           if (span) span.innerText = originalText;
           btn.classList.remove('reclip-error');
         }, 3000);
       }
     });
-  });
+  };
 
-  return btn;
+  btn.addEventListener('click', triggerDownload, true);
+  btn.addEventListener('mousedown', (e) => { e.stopPropagation(); }, true);
+  btn.addEventListener('mouseup', (e) => { e.stopPropagation(); }, true);
+
+  container.appendChild(btn);
 }
 
-function injectYouTubeButtons() {
-  // 1. Inject into standard thumbnails across Home, Search, Channel, Subscriptions, Sidebar
-  const thumbnailAnchors = document.querySelectorAll('a#thumbnail:not(.reclip-injected), a.ytd-thumbnail:not(.reclip-injected)');
-  
-  thumbnailAnchors.forEach(a => {
-    a.classList.add('reclip-injected');
-    a.style.position = 'relative';
+function processAllYouTubeThumbnails() {
+  // Strategy 1: Target modern 2024-2026 YouTube ViewModels
+  const viewModels = document.querySelectorAll('yt-lockup-view-model, yt-thumbnail-view-model, .yt-lockup-view-model__image');
+  viewModels.forEach(el => attachButtonToContainer(el));
 
-    const getUrl = () => {
-      if (a.href && a.href.includes('/watch')) return a.href;
-      if (a.href && a.href.includes('/shorts/')) return a.href;
-      // Fallback: look at parent container for title link
-      const container = a.closest('ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer');
-      if (container) {
-        const titleLink = container.querySelector('a#video-title-link, a#video-title, a[href*="/watch"], a[href*="/shorts/"]');
-        if (titleLink && titleLink.href) return titleLink.href;
-      }
-      return a.getAttribute('href') || a.href;
-    };
+  // Strategy 2: Target classic thumbnail containers
+  const classicThumbs = document.querySelectorAll('ytd-thumbnail, a#thumbnail, a.ytd-thumbnail');
+  classicThumbs.forEach(el => attachButtonToContainer(el));
 
-    const btn = createThumbnailButton(getUrl);
-    a.appendChild(btn);
+  // Strategy 3: Target any anchor wrapping video thumbnails
+  const anchorThumbs = document.querySelectorAll('a[href*="/watch?v="], a[href*="/shorts/"]');
+  anchorThumbs.forEach(a => {
+    if (a.querySelector('img, yt-image, picture, .yt-core-image')) {
+      attachButtonToContainer(a);
+    }
   });
 
-  // 2. Inject on YouTube Watch Page action bar (next to Like / Share)
+  // Strategy 4: YouTube Watch Page action bar (below active video)
   if (window.location.pathname.startsWith('/watch')) {
-    const actionBars = document.querySelectorAll('#top-level-buttons-computed:not(.reclip-watch-injected), #actions ytd-menu-renderer #top-level-buttons-computed:not(.reclip-watch-injected)');
-    
+    const actionBars = document.querySelectorAll('#top-level-buttons-computed, #actions ytd-menu-renderer #top-level-buttons-computed, ytd-watch-metadata #actions');
     actionBars.forEach(bar => {
-      bar.classList.add('reclip-watch-injected');
+      if (bar.querySelector('.reclip-yt-watch-btn') || bar.classList.contains('reclip-watch-processed')) return;
+      bar.classList.add('reclip-watch-processed');
 
-      const watchBtn = document.createElement('button');
+      const watchBtn = document.createElement('div');
       watchBtn.className = 'reclip-yt-watch-btn';
-      watchBtn.title = 'Download video with ReClip';
+      watchBtn.setAttribute('role', 'button');
+      watchBtn.setAttribute('tabindex', '0');
+      watchBtn.title = 'Download current video with ReClip';
       watchBtn.innerHTML = `
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px; display:inline-block; vertical-align:middle;">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -114,21 +159,20 @@ function injectYouTubeButtons() {
             setTimeout(() => { if (span) span.innerText = originalText; }, 3000);
           }
         });
-      });
+      }, true);
 
       bar.prepend(watchBtn);
     });
   }
 }
 
-// Observe DOM updates for dynamic/infinite scroll loading
-const observer = new MutationObserver(() => injectYouTubeButtons());
-observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
+// Attach observers & listeners
+const observer = new MutationObserver(() => processAllYouTubeThumbnails());
+observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
 
-// Listen to YouTube SPA navigation events
-window.addEventListener('yt-navigate-finish', injectYouTubeButtons);
-window.addEventListener('load', injectYouTubeButtons);
+window.addEventListener('yt-navigate-finish', processAllYouTubeThumbnails);
+window.addEventListener('load', processAllYouTubeThumbnails);
+document.addEventListener('DOMContentLoaded', processAllYouTubeThumbnails);
 
-// Regular periodic check
-setInterval(injectYouTubeButtons, 1200);
-setTimeout(injectYouTubeButtons, 500);
+setInterval(processAllYouTubeThumbnails, 1000);
+processAllYouTubeThumbnails();
