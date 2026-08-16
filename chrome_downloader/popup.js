@@ -2,16 +2,20 @@
 
 document.addEventListener('DOMContentLoaded', () => {
   const qualitySelect = document.getElementById('quality');
+  const audioLangSelect = document.getElementById('audioLang');
   const saveBtn = document.getElementById('save');
   const saveMsg = document.getElementById('saveMsg');
   const openFolderBtn = document.getElementById('openFolder');
   const serverDot = document.getElementById('serverDot');
   const serverText = document.getElementById('serverText');
 
-  // Load saved quality
-  chrome.storage.sync.get(['formatId'], (result) => {
+  // Load saved preferences
+  chrome.storage.sync.get(['formatId', 'audioLang'], (result) => {
     if (result.formatId) {
       qualitySelect.value = result.formatId;
+    }
+    if (result.audioLang) {
+      audioLangSelect.value = result.audioLang;
     }
   });
 
@@ -29,8 +33,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Save settings
   saveBtn.addEventListener('click', () => {
     const formatId = qualitySelect.value;
-    chrome.storage.sync.set({ formatId: formatId }, () => {
-      saveMsg.innerText = 'Saved!';
+    const audioLang = audioLangSelect.value;
+    chrome.storage.sync.set({ formatId: formatId, audioLang: audioLang }, () => {
+      saveMsg.innerText = 'Settings Saved!';
       setTimeout(() => { saveMsg.innerText = ''; }, 2000);
     });
   });

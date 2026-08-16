@@ -52,6 +52,7 @@ function updateHudCard(data) {
 
     card.querySelector('.reclip-card-open-btn').addEventListener('click', () => {
       chrome.runtime.sendMessage({ action: 'open_downloads' });
+      fetch('http://127.0.0.1:8899/api/open-downloads', { method: 'POST' }).catch(() => {});
     });
 
     hud.appendChild(card);

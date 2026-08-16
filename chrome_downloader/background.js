@@ -6,7 +6,14 @@ const activeJobs = new Map();
 function openDownloadsFolder() {
   fetch('http://127.0.0.1:8899/api/open-downloads', {
     method: 'POST'
-  }).catch(e => console.error('[ReClip] Could not open downloads folder:', e));
+  })
+  .then(res => res.json())
+  .then(data => console.log('[ReClip] Opened downloads folder:', data))
+  .catch(err => {
+    // Fallback to GET
+    fetch('http://127.0.0.1:8899/api/open-downloads')
+      .catch(e => console.error('[ReClip] Could not open downloads folder:', e));
+  });
 }
 
 // Show system desktop notifications
@@ -26,9 +33,7 @@ function showNotification(id, title, message, isSuccess = false) {
 
 // Handle notification click to open downloads folder
 chrome.notifications.onClicked.addListener((notifId) => {
-  if (notifId.startsWith('reclip_done_') || notifId.startsWith('reclip_start_')) {
-    openDownloadsFolder();
-  }
+  openDownloadsFolder();
 });
 
 // Broadcast progress updates to all tabs
@@ -69,7 +74,7 @@ function pollJobStatus(jobId, videoUrl) {
           showNotification(
             `reclip_done_${jobId}`,
             '✅ ReClip: Download Complete!',
-            `${fileName} has been saved. Click to open downloads folder.`,
+            `${fileName} has been saved. Click here to open folder.`,
             true
           );
         } else if (statusData.status === 'error') {
@@ -93,8 +98,9 @@ function pollJobStatus(jobId, videoUrl) {
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'download') {
-    chrome.storage.sync.get(['formatId'], (result) => {
+    chrome.storage.sync.get(['formatId', 'audioLang'], (result) => {
       const formatId = result.formatId || '1080';
+      const audioLang = result.audioLang || 'original';
       const format = formatId === 'audio' ? 'audio' : 'video';
       const f_id = format === 'audio' ? '' : formatId;
       
@@ -102,7 +108,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         url: request.url,
         format: format,
         format_id: f_id,
-        title: request.title || ''
+        title: request.title || '',
+        audio_lang: audioLang
       };
 
       console.log('[ReClip Extension] Starting download:', payload);
@@ -126,7 +133,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           showNotification(
             `reclip_start_${data.job_id}`,
             '🚀 ReClip: Download Started',
-            'Your download has started in ReClip.'
+            `Started download ${request.title ? `"${request.title.slice(0, 40)}..."` : ''}`
           );
 
           pollJobStatus(data.job_id, request.url);
@@ -148,17 +155,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'check_server') {
-    fetch('http://127.0.0.1:8899/api/status/test')
+    fetch('http://127.0.0.1:8899/api/open-downloads', { method: 'OPTIONS' })
       .then(() => sendResponse({ online: true }))
-      .catch(err => {
-        // Even a 404 from our server means the server is online!
-        if (err.message && err.message.includes('404')) {
-          sendResponse({ online: true });
-        } else {
-          fetch('http://127.0.0.1:8899/')
-            .then(() => sendResponse({ online: true }))
-            .catch(() => sendResponse({ online: false }));
-        }
+      .catch(() => {
+        fetch('http://127.0.0.1:8899/')
+          .then(() => sendResponse({ online: true }))
+          .catch(() => sendResponse({ online: false }));
       });
     return true;
   }

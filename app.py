@@ -10,6 +10,15 @@ from flask import Flask, request, jsonify, send_file, render_template
 app = Flask(__name__)
 import sys
 
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = app.make_default_options_response()
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        return response
+
 @app.after_request
 def add_cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
@@ -143,7 +152,7 @@ def normalize_url(url):
     return url
 
 
-def run_download(job_id, url, format_choice, format_id, cookies_browser=""):
+def run_download(job_id, url, format_choice, format_id, cookies_browser="", audio_lang=""):
     job = jobs[job_id]
     job["percent"] = 0.0
     job["progress_str"] = "Downloading..."
@@ -170,16 +179,34 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser=""):
     elif cookies_browser:
         cmd += ["--cookies-from-browser", cookies_browser]
 
-    if format_choice == "audio":
-        cmd += ["-x", "--audio-format", "mp3"]
-    elif format_id:
-        if str(format_id).isdigit():
+    if audio_lang == "all":
+        cmd += ["--audio-multistreams"]
+        if format_choice == "audio":
+            cmd += ["-x", "--audio-format", "mp3"]
+        elif format_id and str(format_id).isdigit():
             h = int(format_id)
-            cmd += ["-f", f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best", "--merge-output-format", "mp4"]
+            cmd += ["-f", f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best", "--merge-output-format", "mkv"]
         else:
-            cmd += ["-f", f"{format_id}+bestaudio/best", "--merge-output-format", "mp4"]
+            cmd += ["-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mkv"]
+    elif audio_lang and audio_lang not in ("original", "default", "auto", "none", ""):
+        if format_choice == "audio":
+            cmd += ["-f", f"bestaudio[language^={audio_lang}]/bestaudio", "-x", "--audio-format", "mp3"]
+        elif format_id and str(format_id).isdigit():
+            h = int(format_id)
+            cmd += ["-f", f"bestvideo[height<={h}]+bestaudio[language^={audio_lang}]/bestvideo[height<={h}]+bestaudio/best[height<={h}]/best", "--merge-output-format", "mp4"]
+        else:
+            cmd += ["-f", f"bestvideo[height<=1080]+bestaudio[language^={audio_lang}]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mp4"]
     else:
-        cmd += ["-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mp4"]
+        if format_choice == "audio":
+            cmd += ["-x", "--audio-format", "mp3"]
+        elif format_id:
+            if str(format_id).isdigit():
+                h = int(format_id)
+                cmd += ["-f", f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best", "--merge-output-format", "mp4"]
+            else:
+                cmd += ["-f", f"{format_id}+bestaudio/best", "--merge-output-format", "mp4"]
+        else:
+            cmd += ["-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mp4"]
 
     cmd.append(url)
 
@@ -419,14 +446,17 @@ def get_playlist_info():
         return jsonify({"error": str(e)}), 400
 
 
-@app.route("/api/download", methods=["POST"])
+@app.route("/api/download", methods=["POST", "OPTIONS"])
 def start_download():
-    data = request.json
+    if request.method == "OPTIONS":
+        return "", 200
+    data = request.json or {}
     url = data.get("url", "").strip()
     format_choice = data.get("format", "video")
     format_id = data.get("format_id")
     title = data.get("title", "")
     cookies = data.get("cookies", "")
+    audio_lang = data.get("audio_lang", "").strip().lower()
 
     if not url:
         return jsonify({"error": "No URL provided"}), 400
@@ -439,9 +469,10 @@ def start_download():
         "percent": 0.0,
         "progress_str": "Downloading...",
         "filesize": "",
+        "audio_lang": audio_lang
     }
 
-    thread = threading.Thread(target=run_download, args=(job_id, url, format_choice, format_id, cookies))
+    thread = threading.Thread(target=run_download, args=(job_id, url, format_choice, format_id, cookies, audio_lang))
     thread.daemon = True
     thread.start()
 
@@ -522,13 +553,18 @@ def download_file(job_id):
     return send_file(job["file"], as_attachment=True, download_name=job["filename"])
 
 
-@app.route("/api/open-downloads", methods=["POST"])
+@app.route("/api/open-downloads", methods=["GET", "POST", "OPTIONS"])
 def open_downloads():
+    if request.method == "OPTIONS":
+        return "", 200
     try:
-        import sys
-        dl_dir = get_download_dir()
+        dl_dir = os.path.abspath(get_download_dir())
+        os.makedirs(dl_dir, exist_ok=True)
         if os.name == "nt":
-            os.startfile(dl_dir)
+            try:
+                os.startfile(dl_dir)
+            except Exception:
+                subprocess.Popen(["explorer", dl_dir], creationflags=CREATION_FLAGS)
         elif sys.platform == "darwin":
             subprocess.run(["open", dl_dir], creationflags=CREATION_FLAGS)
         else:
