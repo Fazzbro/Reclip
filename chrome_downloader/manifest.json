@@ -2,9 +2,10 @@
   "manifest_version": 3,
   "name": "ReClip Downloader",
   "version": "1.2.0",
-  "description": "Download YouTube and X/Twitter videos directly into ReClip with one click.",
+  "description": "Download YouTube and X/Twitter videos directly into ReClip with live progress and notifications.",
   "permissions": [
-    "storage"
+    "storage",
+    "notifications"
   ],
   "host_permissions": [
     "*://*.youtube.com/*",
@@ -13,6 +14,9 @@
     "http://127.0.0.1:8899/*",
     "http://localhost:8899/*"
   ],
+  "icons": {
+    "128": "icon.png"
+  },
   "background": {
     "service_worker": "background.js"
   },
@@ -32,6 +36,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ReClip Settings"
+    "default_title": "ReClip Settings & Downloads",
+    "default_icon": "icon.png"
   }
 }

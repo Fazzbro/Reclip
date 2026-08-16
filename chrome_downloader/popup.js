@@ -1,18 +1,42 @@
+// ReClip Popup Script v1.2.0
+
 document.addEventListener('DOMContentLoaded', () => {
   const qualitySelect = document.getElementById('quality');
   const saveBtn = document.getElementById('save');
-  const status = document.getElementById('status');
+  const saveMsg = document.getElementById('saveMsg');
+  const openFolderBtn = document.getElementById('openFolder');
+  const serverDot = document.getElementById('serverDot');
+  const serverText = document.getElementById('serverText');
 
+  // Load saved quality
   chrome.storage.sync.get(['formatId'], (result) => {
     if (result.formatId) {
       qualitySelect.value = result.formatId;
     }
   });
 
+  // Check server health
+  chrome.runtime.sendMessage({ action: 'check_server' }, (res) => {
+    if (res && res.online) {
+      serverDot.className = 'status-dot online';
+      serverText.innerText = 'Connected';
+    } else {
+      serverDot.className = 'status-dot offline';
+      serverText.innerText = 'Offline';
+    }
+  });
+
+  // Save settings
   saveBtn.addEventListener('click', () => {
-    chrome.storage.sync.set({ formatId: qualitySelect.value }, () => {
-      status.textContent = 'Saved successfully!';
-      setTimeout(() => { status.textContent = ''; }, 2000);
+    const formatId = qualitySelect.value;
+    chrome.storage.sync.set({ formatId: formatId }, () => {
+      saveMsg.innerText = 'Saved!';
+      setTimeout(() => { saveMsg.innerText = ''; }, 2000);
     });
+  });
+
+  // Open downloads folder
+  openFolderBtn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ action: 'open_downloads' });
   });
 });

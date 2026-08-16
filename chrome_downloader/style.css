@@ -89,3 +89,160 @@
   color: #e04a32 !important;
   background: rgba(224, 74, 50, 0.1) !important;
 }
+
+/* 4. In-Page Floating Live HUD / Toast System */
+.reclip-hud-container {
+  position: fixed !important;
+  bottom: 24px !important;
+  right: 24px !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  flex-direction: column-reverse !important;
+  gap: 12px !important;
+  pointer-events: none !important;
+  max-width: 360px !important;
+  width: calc(100vw - 48px) !important;
+}
+
+.reclip-hud-card {
+  pointer-events: auto !important;
+  background: rgba(20, 20, 26, 0.95) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(0,0,0,0.5) !important;
+  border-radius: 12px !important;
+  padding: 14px 16px !important;
+  color: #ffffff !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+  animation: reclipSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  transition: opacity 0.3s ease, transform 0.3s ease !important;
+}
+
+.reclip-card-fadeout {
+  opacity: 0 !important;
+  transform: translateY(12px) scale(0.95) !important;
+}
+
+@keyframes reclipSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.reclip-card-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  margin-bottom: 8px !important;
+}
+
+.reclip-card-brand {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  color: #e04a32 !important;
+  letter-spacing: 0.3px !important;
+}
+
+.reclip-card-close {
+  background: transparent !important;
+  border: none !important;
+  color: rgba(255, 255, 255, 0.5) !important;
+  font-size: 14px !important;
+  cursor: pointer !important;
+  padding: 2px 6px !important;
+  border-radius: 4px !important;
+  line-height: 1 !important;
+}
+
+.reclip-card-close:hover {
+  color: #ffffff !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.reclip-card-title {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  color: #f1f1f1 !important;
+  margin-bottom: 10px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.reclip-card-bar-bg {
+  width: 100% !important;
+  height: 6px !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-radius: 3px !important;
+  overflow: hidden !important;
+  margin-bottom: 8px !important;
+}
+
+.reclip-card-bar-fill {
+  height: 100% !important;
+  background: linear-gradient(90deg, #e04a32, #ff6b52) !important;
+  border-radius: 3px !important;
+  transition: width 0.25s ease-out !important;
+}
+
+.reclip-card-footer {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  font-size: 11px !important;
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+.reclip-card-pct {
+  font-weight: 700 !important;
+  color: #ffffff !important;
+}
+
+.reclip-card-success .reclip-card-bar-fill {
+  background: #10b981 !important;
+}
+
+.reclip-card-success .reclip-card-brand {
+  color: #10b981 !important;
+}
+
+.reclip-card-error .reclip-card-bar-fill {
+  background: #ef4444 !important;
+}
+
+.reclip-card-error .reclip-card-brand {
+  color: #ef4444 !important;
+}
+
+.reclip-card-actions {
+  margin-top: 10px !important;
+  padding-top: 8px !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+.reclip-card-open-btn {
+  width: 100% !important;
+  padding: 6px 12px !important;
+  background: rgba(16, 185, 129, 0.2) !important;
+  border: 1px solid rgba(16, 185, 129, 0.5) !important;
+  border-radius: 6px !important;
+  color: #34d399 !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+
+.reclip-card-open-btn:hover {
+  background: #10b981 !important;
+  color: #ffffff !important;
+}

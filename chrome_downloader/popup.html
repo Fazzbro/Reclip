@@ -1,29 +1,162 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="utf-8">
   <style>
-    body { font-family: sans-serif; padding: 15px; width: 220px; }
-    h3 { margin-top: 0; color: #e04a32; }
-    select { width: 100%; padding: 5px; margin-bottom: 10px; }
-    button { width: 100%; padding: 8px; background: #e04a32; color: white; border: none; cursor: pointer; border-radius: 4px; }
-    button:hover { background: #d03920; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      width: 280px;
+      padding: 16px;
+      background: #18181f;
+      color: #ffffff;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #e04a32;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #9ca3af;
+    }
+    .status-dot.online { background: #10b981; box-shadow: 0 0 6px #10b981; }
+    .status-dot.offline { background: #ef4444; }
+
+    .form-group {
+      margin-bottom: 12px;
+    }
+    label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: #9ca3af;
+      margin-bottom: 5px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    select {
+      width: 100%;
+      padding: 8px 10px;
+      background: #262630;
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      cursor: pointer;
+    }
+    select:focus {
+      border-color: #e04a32;
+    }
+    .btn-primary {
+      width: 100%;
+      padding: 9px;
+      background: #e04a32;
+      color: #ffffff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      margin-bottom: 8px;
+    }
+    .btn-primary:hover {
+      background: #c53822;
+    }
+    .btn-secondary {
+      width: 100%;
+      padding: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #e5e7eb;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: #ffffff;
+    }
+    .save-msg {
+      font-size: 11px;
+      color: #10b981;
+      text-align: center;
+      height: 14px;
+      margin-top: 4px;
+    }
+    .footer-note {
+      margin-top: 14px;
+      font-size: 10.5px;
+      color: #6b7280;
+      line-height: 1.4;
+      text-align: center;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      padding-top: 10px;
+    }
   </style>
 </head>
 <body>
-  <h3>ReClip Downloader</h3>
-  <label for="quality">Default Quality:</label>
-  <select id="quality">
-    <option value="1080">1080p</option>
-    <option value="720">720p</option>
-    <option value="480">480p</option>
-    <option value="audio">Audio Only (MP3)</option>
-  </select>
-  <button id="save">Save Settings</button>
-  <div id="status" style="margin-top: 5px; font-size: 12px; color: green; text-align: center;"></div>
-  
-  <div style="margin-top: 15px; font-size: 11px; color: #666;">
-    Note: The ReClip application or background server must be running on your computer for downloads to work.
+  <div class="header">
+    <div class="brand">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e04a32" stroke-width="2.5">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>
+      <span>ReClip</span>
+    </div>
+    <div class="status-badge">
+      <span class="status-dot" id="serverDot"></span>
+      <span id="serverText">Checking...</span>
+    </div>
   </div>
+
+  <div class="form-group">
+    <label for="quality">Default Download Quality</label>
+    <select id="quality">
+      <option value="1080">1080p Full HD (Best)</option>
+      <option value="720">720p HD</option>
+      <option value="480">480p SD</option>
+      <option value="audio">Audio Only (MP3)</option>
+    </select>
+  </div>
+
+  <button id="save" class="btn-primary">Save Settings</button>
+  <div id="saveMsg" class="save-msg"></div>
+
+  <button id="openFolder" class="btn-secondary">📂 Open Downloads Folder</button>
+
+  <div class="footer-note">
+    One-click downloads from YouTube & X into your ReClip application.
+  </div>
+
   <script src="popup.js"></script>
 </body>
 </html>
