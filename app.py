@@ -161,7 +161,6 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser=""):
         "--socket-timeout", "15",
         "--js-runtimes", f"node:{NODE_BIN}",
         "--add-header", f"X-Forwarded-For: {get_random_ip()}",
-        "--print", "title",
         "-o", out_template
     ]
 
@@ -202,11 +201,6 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser=""):
             if not line_str:
                 continue
             output_lines.append(line_str)
-
-            # Capture video title from yt-dlp output if not already set
-            if not job.get("title") and not line_str.startswith("[") and "%" not in line_str:
-                if len(line_str) > 2 and not line_str.startswith("WARNING") and not line_str.startswith("ERROR"):
-                    job["title"] = line_str
 
             m = percent_re.search(line_str)
             if m:
@@ -264,22 +258,14 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser=""):
         job["percent"] = 100.0
         job["filesize"] = format_size(actual_size)
         job["progress_str"] = "Completed"
-        
+        job["file"] = chosen
         ext = os.path.splitext(chosen)[1]
         title = job.get("title", "").strip()
-        safe_title = "".join(c for c in title if c not in r'\/:*?"<>|').strip()[:120].strip()
-        if safe_title:
-            final_path = os.path.join(get_download_dir(), f"{safe_title}{ext}")
-            if os.path.exists(final_path) and final_path != chosen:
-                final_path = os.path.join(get_download_dir(), f"{safe_title}_{job_id[:4]}{ext}")
-            try:
-                os.rename(chosen, final_path)
-                chosen = final_path
-            except OSError:
-                pass
-
-        job["file"] = chosen
-        job["filename"] = os.path.basename(chosen)
+        if title:
+            safe_title = "".join(c for c in title if c not in r'\/:*?"<>|').strip()[:100].strip()
+            job["filename"] = f"{safe_title}{ext}" if safe_title else os.path.basename(chosen)
+        else:
+            job["filename"] = os.path.basename(chosen)
     except subprocess.TimeoutExpired:
         job["status"] = "error"
         job["error"] = "Download timed out (5 min limit)"

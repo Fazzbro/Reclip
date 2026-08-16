@@ -162,6 +162,23 @@ function extractVideoUrl(container) {
   return null;
 }
 
+function extractVideoTitle(container) {
+  if (container) {
+    const parentCard = container.closest('yt-lockup-view-model, ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-rich-grid-media');
+    if (parentCard) {
+      const titleEl = parentCard.querySelector('a#video-title-link, a#video-title, #video-title, .yt-lockup-metadata-view-model__title, h3');
+      if (titleEl && titleEl.innerText) {
+        return titleEl.innerText.trim();
+      }
+    }
+  }
+  if (window.location.pathname.startsWith('/watch')) {
+    const watchTitle = document.querySelector('h1.ytd-watch-metadata, #title h1, h1.title');
+    if (watchTitle && watchTitle.innerText) return watchTitle.innerText.trim();
+  }
+  return document.title.replace(' - YouTube', '').trim();
+}
+
 // Attach ReClip button to thumbnail
 function attachButtonToContainer(container) {
   if (container.querySelector('.reclip-yt-btn') || container.classList.contains('reclip-injected-done')) {
@@ -203,6 +220,7 @@ function attachButtonToContainer(container) {
       return;
     }
 
+    const videoTitle = extractVideoTitle(container);
     btn.setAttribute('data-reclip-url', videoUrl);
 
     const span = btn.querySelector('span');
@@ -215,13 +233,13 @@ function attachButtonToContainer(container) {
     updateHudCard({
       job_id: tempJobId,
       url: videoUrl,
-      title: 'Connecting to ReClip backend...',
+      title: videoTitle || 'Connecting to ReClip backend...',
       percent: 5,
       progress_str: 'Sending download request...',
       status: 'downloading'
     });
 
-    chrome.runtime.sendMessage({ action: 'download', url: videoUrl }, (response) => {
+    chrome.runtime.sendMessage({ action: 'download', url: videoUrl, title: videoTitle }, (response) => {
       btn.style.opacity = '1';
       const tempCard = document.getElementById(`reclip-card-${tempJobId}`);
       if (tempCard) tempCard.remove();
