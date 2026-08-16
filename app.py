@@ -196,6 +196,7 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser=""):
         )
         job["process"] = process
 
+        output_lines = []
         for line in iter(process.stdout.readline, ''):
             line_str = line.strip()
             if not line_str:
