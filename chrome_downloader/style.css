@@ -1,24 +1,87 @@
-.reclip-download-btn {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  background: rgba(224, 74, 50, 0.9);
-  border: none;
-  border-radius: 4px;
-  color: white;
-  font-size: 14px;
-  padding: 4px 8px;
-  cursor: pointer;
-  z-index: 99;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.5);
-  transition: all 0.2s ease-in-out;
+/* ReClip YouTube Thumbnail Button */
+.reclip-yt-btn {
+  position: absolute !important;
+  top: 6px !important;
+  left: 6px !important;
+  z-index: 999999 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: #e04a32 !important;
+  color: #ffffff !important;
+  font-family: Roboto, Arial, sans-serif !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+  padding: 5px 8px !important;
+  border-radius: 6px !important;
+  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6) !important;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  text-decoration: none !important;
+  user-select: none !important;
+  transition: all 0.2s ease-in-out !important;
+  opacity: 0.95 !important;
 }
 
-.reclip-download-btn:hover {
-  background: rgba(208, 57, 32, 1);
-  transform: scale(1.1);
+.reclip-yt-btn:hover {
+  background: #c53822 !important;
+  transform: scale(1.06) !important;
+  opacity: 1 !important;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.7) !important;
+}
+
+.reclip-yt-btn.reclip-success {
+  background: #10b981 !important;
+}
+
+.reclip-yt-btn.reclip-error {
+  background: #ef4444 !important;
+}
+
+/* ReClip YouTube Watch Page Button */
+.reclip-yt-watch-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: rgba(224, 74, 50, 0.15) !important;
+  color: #e04a32 !important;
+  font-family: Roboto, Arial, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  padding: 0 14px !important;
+  height: 36px !important;
+  border-radius: 18px !important;
+  border: 1px solid rgba(224, 74, 50, 0.4) !important;
+  cursor: pointer !important;
+  margin-right: 8px !important;
+  transition: all 0.2s ease !important;
+}
+
+.reclip-yt-watch-btn:hover {
+  background: #e04a32 !important;
+  color: #ffffff !important;
+  border-color: #e04a32 !important;
+}
+
+/* ReClip Twitter/X Button */
+.reclip-download-btn-x {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: transparent !important;
+  color: #71767b !important;
+  border: none !important;
+  cursor: pointer !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  padding: 4px 8px !important;
+  border-radius: 9999px !important;
+  transition: all 0.2s ease !important;
 }
 
 .reclip-download-btn-x:hover {
-  transform: scale(1.1);
+  color: #e04a32 !important;
+  background: rgba(224, 74, 50, 0.1) !important;
 }
