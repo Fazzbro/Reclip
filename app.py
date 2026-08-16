@@ -26,43 +26,54 @@ def add_cors_headers(response):
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     return response
 
+def get_config_dir():
+    app_data = os.environ.get("APPDATA") or os.path.expanduser("~")
+    reclip_dir = os.path.join(app_data, "ReClip")
+    os.makedirs(reclip_dir, exist_ok=True)
+    return reclip_dir
+
 def get_config_path():
-    if getattr(sys, 'frozen', False):
-        return os.path.join(os.path.dirname(sys.executable), "reclip_config.json")
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "reclip_config.json")
+    return os.path.join(get_config_dir(), "reclip_config.json")
+
+def get_default_download_dir():
+    user_downloads = os.path.join(os.path.expanduser("~"), "Downloads")
+    if os.path.exists(user_downloads):
+        reclip_dl = os.path.join(user_downloads, "ReClip")
+        os.makedirs(reclip_dl, exist_ok=True)
+        return reclip_dl
+    local_dl = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
+    os.makedirs(local_dl, exist_ok=True)
+    return local_dl
 
 def get_download_dir():
     config_path = get_config_path()
     if os.path.exists(config_path):
         try:
-            with open(config_path, "r") as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
                 d = config.get("download_dir")
                 if d and os.path.exists(d):
-                    return d
+                    return os.path.abspath(d)
         except:
             pass
     
-    if getattr(sys, 'frozen', False):
-        default_dir = os.path.join(os.path.dirname(sys.executable), "downloads")
-    else:
-        default_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
-    
-    os.makedirs(default_dir, exist_ok=True)
-    return default_dir
+    return os.path.abspath(get_default_download_dir())
 
 def set_download_dir(path):
     config_path = get_config_path()
     config = {}
     if os.path.exists(config_path):
         try:
-            with open(config_path, "r") as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
         except:
             pass
-    config["download_dir"] = path
-    with open(config_path, "w") as f:
-        json.dump(config, f)
+    config["download_dir"] = os.path.abspath(path)
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f)
+    except:
+        pass
 
 
 if getattr(sys, 'frozen', False):
@@ -72,16 +83,19 @@ else:
 
 YTDLP_BIN = os.path.join(base_path, "bin", "yt-dlp.exe") if os.name == "nt" else "yt-dlp"
 if not os.path.exists(YTDLP_BIN):
-    # Fallback for debugging, try finding it relative to the executable
     alt_path = os.path.join(os.path.dirname(sys.executable), "_internal", "bin", "yt-dlp.exe")
     if os.path.exists(alt_path):
         YTDLP_BIN = alt_path
     else:
         YTDLP_BIN = "yt-dlp"
-        
-# DEBUG: Log the resolved path so we know exactly what is executing
-with open(os.path.join(get_download_dir(), "reclip_debug.log"), "a") as f:
-    f.write(f"Resolved YTDLP_BIN: {YTDLP_BIN} (exists: {os.path.exists(YTDLP_BIN)})\n")
+
+FFMPEG_DIR = os.path.join(base_path, "bin")
+if not os.path.exists(os.path.join(FFMPEG_DIR, "ffmpeg.exe")):
+    alt_ffmpeg = os.path.join(os.path.dirname(sys.executable), "_internal", "bin")
+    if os.path.exists(os.path.join(alt_ffmpeg, "ffmpeg.exe")):
+        FFMPEG_DIR = alt_ffmpeg
+    else:
+        FFMPEG_DIR = ""
 
 # Prevent terminal window creation during subprocess calls on Windows
 CREATION_FLAGS = (
@@ -158,7 +172,9 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser="", audi
     job["progress_str"] = "Downloading..."
     job["filesize"] = ""
     url = normalize_url(url)
-    out_template = os.path.join(get_download_dir(), f"{job_id}.%(ext)s")
+    dl_dir = get_download_dir()
+    os.makedirs(dl_dir, exist_ok=True)
+    out_template = os.path.join(dl_dir, f"{job_id}.%(ext)s")
 
     cmd = [
         YTDLP_BIN,
@@ -173,7 +189,10 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser="", audi
         "-o", out_template
     ]
 
-    cookies_txt_path = os.path.join(get_download_dir(), "cookies.txt")
+    if FFMPEG_DIR and os.path.exists(FFMPEG_DIR):
+        cmd += ["--ffmpeg-location", FFMPEG_DIR]
+
+    cookies_txt_path = os.path.join(dl_dir, "cookies.txt")
     if os.path.exists(cookies_txt_path):
         cmd += ["--cookies", cookies_txt_path]
     elif cookies_browser:
@@ -253,24 +272,45 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser="", audi
 
         if returncode != 0:
             job["status"] = "error"
-            error_msg = output_lines[-1] if output_lines else "Download failed"
+            # Find the most descriptive error message
+            error_msg = "Download failed"
+            for l in reversed(output_lines):
+                if "ERROR:" in l or "Errno" in l or "Permission denied" in l:
+                    error_msg = l.replace("ERROR:", "").strip()
+                    break
+            else:
+                if output_lines:
+                    error_msg = output_lines[-1]
+
             if "Could not copy Chrome cookie database" in error_msg or "Failed to decrypt with DPAPI" in error_msg:
                 job["error"] = "Chrome security prevents cookie extraction. Drop a 'cookies.txt' file in the downloads folder, or try Edge/Firefox."
             else:
                 job["error"] = error_msg
             return
 
-        files = glob.glob(os.path.join(get_download_dir(), f"{job_id}.*"))
+        # Locate downloaded output files in download directory
+        try:
+            all_dl_files = os.listdir(dl_dir)
+        except Exception:
+            all_dl_files = []
+
+        files = [
+            os.path.join(dl_dir, f) for f in all_dl_files
+            if f.startswith(f"{job_id}.") and not f.endswith(".part") and not f.endswith(".ytdl") and not f.endswith(".temp")
+        ]
+
         if not files:
+            # Check if any error occurred in output lines
+            err_cand = [l for l in output_lines if "ERROR:" in l or "Errno" in l or "Permission denied" in l]
             job["status"] = "error"
-            job["error"] = "Download completed but no file was found"
+            job["error"] = err_cand[-1] if err_cand else "Download completed but no file was found on disk"
             return
 
         if format_choice == "audio":
-            target = [f for f in files if f.endswith(".mp3")]
+            target = [f for f in files if f.endswith(".mp3") or f.endswith(".m4a") or f.endswith(".opus")]
             chosen = target[0] if target else files[0]
         else:
-            target = [f for f in files if f.endswith(".mp4")]
+            target = [f for f in files if f.endswith(".mp4") or f.endswith(".mkv") or f.endswith(".webm")]
             chosen = target[0] if target else files[0]
 
         for f in files:
