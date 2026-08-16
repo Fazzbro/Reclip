@@ -435,6 +435,24 @@
         <button class="pill active" data-format="video" onclick="setFormat(this)">MP4</button>
         <button class="pill" data-format="audio" onclick="setFormat(this)">MP3</button>
       </div>
+      <select id="audio-lang" class="pill" style="margin-left: 10px; cursor: pointer; border: 1.5px solid var(--card-border); border-radius: 10px;">
+        <option value="original">🌐 Original Audio</option>
+        <option value="all">🎧 All Tracks (Multi-Audio)</option>
+        <option value="ml">🇮🇳 Malayalam (മലയാളം)</option>
+        <option value="hi">🇮🇳 Hindi (हिन्दी)</option>
+        <option value="ta">🇮🇳 Tamil (தமிழ்)</option>
+        <option value="te">🇮🇳 Telugu (తెలుగు)</option>
+        <option value="en">🇺🇸 English</option>
+        <option value="es">🇪🇸 Spanish (Español)</option>
+        <option value="fr">🇫🇷 French (Français)</option>
+        <option value="de">🇩🇪 German (Deutsch)</option>
+        <option value="ja">🇯🇵 Japanese (日本語)</option>
+        <option value="ko">🇰🇷 Korean (한국어)</option>
+        <option value="pt">🇧🇷 Portuguese (Português)</option>
+        <option value="ru">🇷🇺 Russian (Русский)</option>
+        <option value="ar">🇸🇦 Arabic (العربية)</option>
+        <option value="id">🇮🇩 Indonesian (Bahasa)</option>
+      </select>
       <select id="browser-cookies" class="pill" style="margin-left: 10px; cursor: pointer; border: 1.5px solid var(--card-border); border-radius: 10px;">
         <option value="">No Cookies (Default)</option>
         <option value="chrome">Chrome</option>
@@ -728,6 +746,7 @@
 
       try {
         const browserCookies = document.getElementById('browser-cookies').value;
+        const audioLang = document.getElementById('audio-lang') ? document.getElementById('audio-lang').value : 'original';
         const res = await fetch('/api/download', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -737,6 +756,7 @@
             format_id: c.selectedFormatId,
             title: c.title || '',
             cookies: browserCookies,
+            audio_lang: audioLang,
           }),
         });
         const data = await res.json();
