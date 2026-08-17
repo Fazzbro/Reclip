@@ -180,6 +180,24 @@ function extractVideoTitle(container) {
   return document.title.replace(' - YouTube', '').trim();
 }
 
+function getActiveYouTubeAudioTrack() {
+  try {
+    const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    if (player && typeof player.getAudioTrack === 'function') {
+      const track = player.getAudioTrack();
+      if (track) {
+        const trackId = track.u0?.id || track.id || '';
+        const trackName = track.u0?.name || '';
+        const isDefault = track.u0?.isDefault ?? true;
+        let langCode = trackId.split('.')[0] || trackId.split(';')[0] || '';
+        if (langCode.includes('-')) langCode = langCode.split('-')[0];
+        return { code: langCode.toLowerCase(), name: trackName, isDefault: isDefault };
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+
 // Attach ReClip button to thumbnail
 function attachButtonToContainer(container) {
   if (container.querySelector('.reclip-yt-btn') || container.classList.contains('reclip-injected-done')) {
@@ -222,6 +240,7 @@ function attachButtonToContainer(container) {
     }
 
     const videoTitle = extractVideoTitle(container);
+    const activeAudio = getActiveYouTubeAudioTrack();
     btn.setAttribute('data-reclip-url', videoUrl);
 
     const span = btn.querySelector('span');
@@ -240,7 +259,12 @@ function attachButtonToContainer(container) {
       status: 'downloading'
     });
 
-    chrome.runtime.sendMessage({ action: 'download', url: videoUrl, title: videoTitle }, (response) => {
+    chrome.runtime.sendMessage({
+      action: 'download',
+      url: videoUrl,
+      title: videoTitle,
+      detected_audio_lang: activeAudio && !activeAudio.isDefault ? activeAudio.code : ''
+    }, (response) => {
       btn.style.opacity = '1';
       const tempCard = document.getElementById(`reclip-card-${tempJobId}`);
       if (tempCard) tempCard.remove();

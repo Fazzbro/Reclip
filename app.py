@@ -128,19 +128,19 @@ def get_random_ip():
     return f"{random.randint(11, 250)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)}"
 
 def parse_ytdlp_json(stdout):
-    """Parse yt-dlp JSON output.
-
-    With ``-j`` yt-dlp prints one JSON object per line. Some extractors
-    emit multiple videos even with ``--no-playlist``, so stdout contains
-    several objects and a plain ``json.loads`` raises "Extra data".
-    Return the first valid object.
+    """
+    yt-dlp can produce warnings or extra text before/after the JSON payload.
+    Iterate over lines to find and return the first valid JSON object.
     """
     for line in stdout.splitlines():
         line = line.strip()
-        if not line:
+        if not line or not (line.startswith("{") and line.endswith("}")):
             continue
-        return json.loads(line)
-    raise ValueError("yt-dlp returned no data")
+        try:
+            return json.loads(line)
+        except Exception:
+            continue
+    raise ValueError("yt-dlp returned no valid JSON data")
 
 NODE_BIN = os.path.join(base_path, "bin", "node.exe") if os.name == "nt" else "node"
 if not os.path.exists(NODE_BIN):
@@ -184,7 +184,6 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser="", audi
         "--geo-bypass",
         "--no-check-certificates",
         "--socket-timeout", "15",
-        "--js-runtimes", f"node:{NODE_BIN}",
         "--add-header", f"X-Forwarded-For: {get_random_ip()}",
         "-o", out_template
     ]
@@ -209,23 +208,23 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser="", audi
             cmd += ["-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mkv"]
     elif audio_lang and audio_lang not in ("original", "default", "auto", "none", ""):
         if format_choice == "audio":
-            cmd += ["-f", f"bestaudio[language^={audio_lang}]/bestaudio", "-x", "--audio-format", "mp3"]
+            cmd += ["-f", f"bestaudio[language^={audio_lang}][ext=m4a]/bestaudio[language^={audio_lang}]/bestaudio", "-x", "--audio-format", "mp3"]
         elif format_id and str(format_id).isdigit():
             h = int(format_id)
-            cmd += ["-f", f"bestvideo[height<={h}]+bestaudio[language^={audio_lang}]/bestvideo[height<={h}]+bestaudio/best[height<={h}]/best", "--merge-output-format", "mp4"]
+            cmd += ["-f", f"bestvideo[height<={h}]+bestaudio[language^={audio_lang}][ext=m4a]/bestvideo[height<={h}]+bestaudio[language^={audio_lang}]/bestvideo[height<={h}]+bestaudio/best[height<={h}]/best", "--merge-output-format", "mp4"]
         else:
-            cmd += ["-f", f"bestvideo[height<=1080]+bestaudio[language^={audio_lang}]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mp4"]
+            cmd += ["-f", f"bestvideo[height<=1080]+bestaudio[language^={audio_lang}][ext=m4a]/bestvideo[height<=1080]+bestaudio[language^={audio_lang}]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mp4"]
     else:
         if format_choice == "audio":
             cmd += ["-x", "--audio-format", "mp3"]
         elif format_id:
             if str(format_id).isdigit():
                 h = int(format_id)
-                cmd += ["-f", f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best", "--merge-output-format", "mp4"]
+                cmd += ["-f", f"bestvideo[height<={h}]+bestaudio[ext=m4a]/bestvideo[height<={h}]+bestaudio/best[height<={h}]/best", "--merge-output-format", "mp4"]
             else:
                 cmd += ["-f", f"{format_id}+bestaudio/best", "--merge-output-format", "mp4"]
         else:
-            cmd += ["-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mp4"]
+            cmd += ["-f", "bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mp4"]
 
     cmd.append(url)
 
@@ -396,7 +395,6 @@ def get_info():
         "--geo-bypass",
         "--no-check-certificates",
         "--socket-timeout", "15",
-        "--js-runtimes", f"node:{NODE_BIN}",
         "--add-header", f"X-Forwarded-For: {get_random_ip()}",
         "-j"
     ]
@@ -411,6 +409,8 @@ def get_info():
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=25,
             creationflags=CREATION_FLAGS,
         )
@@ -472,10 +472,48 @@ def get_info():
             ]
 
         approx_size = info.get("filesize_approx") or info.get("filesize")
-        filesize_str = format_size(approx_size) if approx_size else ""
-        
-        if formats and not formats[0]["filesize"] and approx_size:
-            formats[0]["filesize"] = filesize_str
+        # Extract available multi-audio dub tracks
+        audio_languages = []
+        seen_langs = set()
+        LANG_NAMES = {
+            "ml": "Malayalam (മലയാളം)",
+            "hi": "Hindi (हिन्दी)",
+            "ta": "Tamil (தமிழ்)",
+            "te": "Telugu (తెలుగు)",
+            "en": "English (Original)",
+            "en-us": "English (US)",
+            "en-gb": "English (UK)",
+            "es": "Spanish (Español)",
+            "fr": "French (Français)",
+            "de": "German (Deutsch)",
+            "ja": "Japanese (日本語)",
+            "ko": "Korean (한국어)",
+            "pt": "Portuguese (Português)",
+            "ru": "Russian (Русский)",
+            "ar": "Arabic (العربية)",
+            "id": "Indonesian (Bahasa)",
+            "vi": "Vietnamese (Tiếng Việt)",
+            "th": "Thai (ไทย)",
+            "tr": "Turkish (Türkçe)",
+            "it": "Italian (Italiano)",
+            "pl": "Polish (Polski)",
+            "bn": "Bangla (বাংলা)",
+            "mr": "Marathi (मराठी)",
+            "pa": "Punjabi (ਪੰਜਾਬੀ)",
+        }
+
+        for f in info.get("formats", []):
+            if f.get("vcodec") in ("none", None) and f.get("language"):
+                raw_lang = (f.get("language") or "").lower().strip()
+                base_lang = raw_lang.split("-")[0]
+                if base_lang and base_lang not in seen_langs:
+                    seen_langs.add(base_lang)
+                    name = LANG_NAMES.get(raw_lang) or LANG_NAMES.get(base_lang) or raw_lang.upper()
+                    audio_languages.append({
+                        "code": base_lang,
+                        "lang_id": raw_lang,
+                        "name": name,
+                    })
 
         return jsonify({
             "title": info.get("title", ""),
@@ -485,6 +523,7 @@ def get_info():
             "filesize": filesize_str,
             "audio_filesize": format_size(best_audio_size) if best_audio_size else "",
             "formats": formats,
+            "audio_languages": audio_languages,
         })
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Timed out fetching video info"}), 400

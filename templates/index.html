@@ -598,6 +598,8 @@
               audio_filesize: data.audio_filesize || '',
               formats: data.formats || [],
               selectedFormatId: data.formats?.[0]?.id || null,
+              audio_languages: data.audio_languages || [],
+              selectedAudioLang: document.getElementById('audio-lang')?.value || 'original',
             };
           }
         } catch (err) {
@@ -710,11 +712,26 @@
           <span class="card-status error">${esc(friendlyError(c.error || 'Download failed'))}</span>`;
       }
 
+      let audioRowHtml = '';
+      if (!isAudio && c.audio_languages && c.audio_languages.length > 1) {
+        audioRowHtml = `
+          <div style="margin-top: 6px; display: flex; align-items: center; gap: 6px;">
+            <span style="font-size: 0.72rem; color: var(--text-muted);">Audio Dub:</span>
+            <select class="pill" style="padding: 2px 8px; font-size: 0.72rem; border-radius: 6px; cursor: pointer; border: 1px solid var(--card-border);" onchange="pickAudio(${idx}, this.value)">
+              <option value="original" ${c.selectedAudioLang === 'original' ? 'selected' : ''}>🌐 Original Audio</option>
+              <option value="all" ${c.selectedAudioLang === 'all' ? 'selected' : ''}>🎧 All Tracks (Multi-Audio)</option>
+              ${c.audio_languages.map(a => `<option value="${a.code}" ${c.selectedAudioLang === a.code ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}
+            </select>
+          </div>
+        `;
+      }
+
       el.innerHTML = `
         <div class="card-thumb">${thumbHtml}</div>
         <div class="card-body">
           <div class="card-title">${esc(c.title || 'Untitled')}</div>
           <div class="card-meta">${esc(c.uploader)}${c.duration ? ' · ' + fmtDur(c.duration) : ''}${currentFilesize ? ' · Est. ' + esc(currentFilesize) : ''}</div>
+          ${audioRowHtml}
           <div class="card-actions">${actionHtml}</div>
         </div>
       `;
@@ -736,6 +753,10 @@
       renderCard(idx);
     }
 
+    function pickAudio(idx, langCode) {
+      cardData[idx].selectedAudioLang = langCode;
+    }
+
     async function dlCard(idx) {
       const c = cardData[idx];
       c.status = 'downloading';
@@ -746,7 +767,7 @@
 
       try {
         const browserCookies = document.getElementById('browser-cookies').value;
-        const audioLang = document.getElementById('audio-lang') ? document.getElementById('audio-lang').value : 'original';
+        const audioLang = c.selectedAudioLang || (document.getElementById('audio-lang') ? document.getElementById('audio-lang').value : 'original');
         const res = await fetch('/api/download', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

@@ -100,7 +100,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'download') {
     chrome.storage.sync.get(['formatId', 'audioLang'], (result) => {
       const formatId = result.formatId || '1080';
-      const audioLang = result.audioLang || 'original';
+      let audioLang = result.audioLang || 'original';
+      if (audioLang === 'original' && request.detected_audio_lang) {
+        audioLang = request.detected_audio_lang;
+      }
       const format = formatId === 'audio' ? 'audio' : 'video';
       const f_id = format === 'audio' ? '' : formatId;
       

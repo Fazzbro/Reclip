@@ -30,15 +30,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Save settings
-  saveBtn.addEventListener('click', () => {
+  function savePreferences() {
     const formatId = qualitySelect.value;
     const audioLang = audioLangSelect.value;
     chrome.storage.sync.set({ formatId: formatId, audioLang: audioLang }, () => {
       saveMsg.innerText = 'Settings Saved!';
       setTimeout(() => { saveMsg.innerText = ''; }, 2000);
     });
-  });
+  }
+
+  // Auto-save on change
+  qualitySelect.addEventListener('change', savePreferences);
+  audioLangSelect.addEventListener('change', savePreferences);
+
+  // Manual save button
+  saveBtn.addEventListener('click', savePreferences);
 
   // Open downloads folder
   openFolderBtn.addEventListener('click', () => {
