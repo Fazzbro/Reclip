@@ -4,11 +4,16 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -16,6 +21,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.webkit.WebViewAssetLoader
 import com.fazzbro.reclip.data.model.FormatOption
 import com.fazzbro.reclip.data.model.MediaFormatType
 import com.fazzbro.reclip.data.repository.DownloadRepository
@@ -65,18 +71,46 @@ class MainActivity : ComponentActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
-        webView = WebView(this).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.allowFileAccess = true
-            settings.allowContentAccess = true
-            settings.databaseEnabled = true
-            settings.useWideViewPort = true
-            settings.loadWithOverviewMode = true
-            settings.mediaPlaybackRequiresUserGesture = false
+        val assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
 
-            webChromeClient = WebChromeClient()
+        WebView.setWebContentsDebuggingEnabled(true)
+
+        webView = WebView(this).apply {
+            setBackgroundColor(Color.parseColor("#F7F5F0"))
+
+            settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                allowFileAccess = true
+                allowContentAccess = true
+                databaseEnabled = true
+                useWideViewPort = true
+                loadWithOverviewMode = true
+                mediaPlaybackRequiresUserGesture = false
+                allowFileAccessFromFileURLs = true
+                allowUniversalAccessFromFileURLs = true
+            }
+
+            webChromeClient = object : WebChromeClient() {
+                override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                    consoleMessage?.let {
+                        Log.d("ReClipWeb", "[${it.messageLevel()}] ${it.message()} -- line ${it.lineNumber()} of ${it.sourceId()}")
+                    }
+                    return super.onConsoleMessage(consoleMessage)
+                }
+            }
+
             webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): WebResourceResponse? {
+                    val url = request?.url ?: return null
+                    return assetLoader.shouldInterceptRequest(url)
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     pendingSharedUrl?.let { shared ->
@@ -84,14 +118,27 @@ class MainActivity : ComponentActivity() {
                         pendingSharedUrl = null
                     }
                 }
+
+                override fun onReceivedError(
+                    view: WebView?,
+                    errorCode: Int,
+                    description: String?,
+                    failingUrl: String?
+                ) {
+                    Log.e("ReClipWeb", "WebView error: $errorCode, $description, failingUrl: $failingUrl")
+                    if (failingUrl?.startsWith("https://appassets.androidplatform.net") == true) {
+                        view?.loadUrl("file:///android_asset/web/index.html")
+                    }
+                }
             }
 
             addJavascriptInterface(WebAppInterface(), "AndroidBridge")
-            loadUrl("file:///android_asset/web/index.html")
+            loadUrl("https://appassets.androidplatform.net/assets/web/index.html")
         }
 
         setContentView(webView)
     }
+
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -333,16 +380,16 @@ class MainActivity : ComponentActivity() {
         }
 
         @JavascriptInterface
-        fun hasCookies(): Boolean = cookieManager.hasCookies()
+        fun hasCookies(): Boolean = try { cookieManager.hasCookies() } catch (e: Exception) { false }
 
         @JavascriptInterface
-        fun getCookieContent(): String = cookieManager.getCookieContent()
+        fun getCookieContent(): String = try { cookieManager.getCookieContent() } catch (e: Exception) { "" }
 
         @JavascriptInterface
-        fun saveCookies(content: String): Boolean = cookieManager.saveCookieContent(content)
+        fun saveCookies(content: String): Boolean = try { cookieManager.saveCookieContent(content) } catch (e: Exception) { false }
 
         @JavascriptInterface
-        fun clearCookies(): Boolean = cookieManager.clearCookies()
+        fun clearCookies(): Boolean = try { cookieManager.clearCookies() } catch (e: Exception) { false }
 
         @JavascriptInterface
         fun updateYtDlp(): String {
