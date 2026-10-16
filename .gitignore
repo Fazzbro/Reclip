@@ -23,3 +23,13 @@ yt-dlp-error.txt
 bin/
 dist/
 *.exe
+
+# Android
+android/.gradle/
+android/**/build/
+android/.kotlin/
+.gradle/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
