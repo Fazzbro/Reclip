@@ -16,8 +16,12 @@ import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import com.yausername.youtubedl_android.mapper.VideoInfo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -28,11 +32,29 @@ import java.util.regex.Pattern
 
 class DownloadRepository(private val context: Context) {
 
+    companion object {
+        @Volatile
+        private var INSTANCE: DownloadRepository? = null
+
+        fun getInstance(context: Context): DownloadRepository {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: DownloadRepository(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+    }
+
     private val cookieManager = CookieManager(context)
     private val prefs: SharedPreferences = context.getSharedPreferences("reclip_history", Context.MODE_PRIVATE)
 
     private val _activeDownloads = MutableStateFlow<Map<String, DownloadItem>>(emptyMap())
     val activeDownloads: StateFlow<Map<String, DownloadItem>> = _activeDownloads.asStateFlow()
+
+    private val _downloadEvents = MutableSharedFlow<DownloadItem>(
+        replay = 1,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val downloadEvents: SharedFlow<DownloadItem> = _downloadEvents.asSharedFlow()
 
     private val _downloadHistory = MutableStateFlow<List<DownloadItem>>(emptyList())
     val downloadHistory: StateFlow<List<DownloadItem>> = _downloadHistory.asStateFlow()
@@ -45,14 +67,36 @@ class DownloadRepository(private val context: Context) {
 
     fun normalizeUrl(rawUrl: String): String {
         val url = rawUrl.trim()
+
+        // YouTube short links
         val shortMatch = Pattern.compile("youtu\\.be/([a-zA-Z0-9_-]{11})").matcher(url)
         if (shortMatch.find()) return "https://www.youtube.com/watch?v=${shortMatch.group(1)}"
 
+        // YouTube watch
         val watchMatch = Pattern.compile("youtube\\.com/watch\\?v=([a-zA-Z0-9_-]{11})").matcher(url)
         if (watchMatch.find()) return "https://www.youtube.com/watch?v=${watchMatch.group(1)}"
 
+        // YouTube shorts
         val shortsMatch = Pattern.compile("youtube\\.com/shorts/([a-zA-Z0-9_-]{11})").matcher(url)
         if (shortsMatch.find()) return "https://www.youtube.com/watch?v=${shortsMatch.group(1)}"
+
+        // Instagram: clean query parameters (e.g. ?igsh=... &utm_source=...)
+        val igReelMatch = Pattern.compile("(https?://(?:www\\.)?instagram\\.com/(?:reel|reels|p|tv)/[a-zA-Z0-9_-]+)").matcher(url)
+        if (igReelMatch.find()) {
+            return "${igReelMatch.group(1)}/"
+        }
+
+        // TikTok: clean query parameters
+        val tiktokMatch = Pattern.compile("(https?://(?:www\\.|vm\\.|vt\\.)?tiktok\\.com/(?:@[a-zA-Z0-9_.-]+/video/\\d+|[a-zA-Z0-9]+))").matcher(url)
+        if (tiktokMatch.find()) {
+            return tiktokMatch.group(1)
+        }
+
+        // Twitter/X: clean query parameters
+        val xMatch = Pattern.compile("(https?://(?:twitter|x)\\.com/[a-zA-Z0-9_]+/status/\\d+)").matcher(url)
+        if (xMatch.find()) {
+            return xMatch.group(1)
+        }
 
         return url
     }
@@ -65,124 +109,251 @@ class DownloadRepository(private val context: Context) {
 
         try {
             val request = YoutubeDLRequest(url)
+            request.addOption("--dump-json")
             request.addOption("--no-playlist")
             request.addOption("--geo-bypass")
-            request.addOption("--socket-timeout", "15")
+            request.addOption("--no-check-certificates")
+            request.addOption("--socket-timeout", "20")
 
             val cookiePath = cookieManager.getCookiePath()
             if (cookiePath != null) {
                 request.addOption("--cookies", cookiePath)
             }
 
-            val streamInfo: VideoInfo = YoutubeDL.getInstance().getInfo(request)
+            val response = YoutubeDL.getInstance().execute(request)
+            val rawOutput = response.out ?: ""
 
-            val formatsList = mutableListOf<FormatOption>()
-            val formats = streamInfo.formats ?: emptyList()
-
-            // Map best video format per height
-            val bestByHeight = mutableMapOf<Int, Long>()
-            var bestAudioSize = 0L
-
-            for (f in formats) {
-                val height = f.height
-                val size = if (f.fileSize > 0L) {
-                    f.fileSize
-                } else if (f.fileSizeApproximate > 0L) {
-                    f.fileSizeApproximate
-                } else {
-                    0L
-                }
-
-                if (height >= 144) {
-                    val currentBest = bestByHeight[height] ?: 0L
-                    if (size > currentBest) {
-                        bestByHeight[height] = size
+            var jsonRoot: JSONObject? = null
+            for (line in rawOutput.lines()) {
+                val trimmed = line.trim()
+                if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+                    try {
+                        jsonRoot = JSONObject(trimmed)
+                        break
+                    } catch (ignored: Exception) {
                     }
                 }
-                if (f.vcodec == "none" || f.vcodec == null) {
-                    if (size > bestAudioSize) {
-                        bestAudioSize = size
+            }
+            if (jsonRoot == null) {
+                jsonRoot = JSONObject(rawOutput)
+            }
+
+            val title = jsonRoot.optString("title").ifBlank { "Media_${System.currentTimeMillis()}" }
+            val thumbnail = jsonRoot.optString("thumbnail", "")
+            val duration = jsonRoot.optLong("duration", 0L)
+            val uploader = jsonRoot.optString("uploader", "")
+            val formatsArray = jsonRoot.optJSONArray("formats") ?: JSONArray()
+
+            val bestByHeight = mutableMapOf<Int, JSONObject>()
+            var bestAudioSize = 0L
+
+            // 1. Identify default audio track size (format 140 / 128kbps AAC or best known audio stream)
+            for (i in 0 until formatsArray.length()) {
+                val f = formatsArray.optJSONObject(i) ?: continue
+                val vcodec = f.optString("vcodec", "")
+                val acodec = f.optString("acodec", "")
+                val isAudioOnly = (vcodec == "none" || vcodec.isEmpty()) && (acodec != "none" && acodec.isNotEmpty())
+                if (isAudioOnly) {
+                    val fid = f.optString("format_id", "")
+                    val lang = f.optString("language", "").lowercase()
+                    var aSize = f.optLong("filesize", 0L)
+                    if (aSize <= 0L) aSize = f.optLong("filesize_approx", 0L)
+
+                    if (aSize > 0L) {
+                        if (fid.contains("140") || lang == "en" || lang == "original" || bestAudioSize == 0L) {
+                            bestAudioSize = aSize
+                        }
+                    }
+                }
+            }
+            if (bestAudioSize <= 0L && duration > 0L) {
+                // Realistic 128 kbps standard audio track size
+                bestAudioSize = ((128.0 * 1000.0 / 8.0) * duration).toLong()
+            }
+
+            // 2. Select realistic video stream matching yt-dlp's actual download preference
+            for (i in 0 until formatsArray.length()) {
+                val f = formatsArray.optJSONObject(i) ?: continue
+                val height = f.optInt("height", 0)
+                val width = f.optInt("width", 0)
+                val vcodec = f.optString("vcodec", "").lowercase()
+
+                val effectiveHeight = if (width in 144..height && height > width) width else height
+                if (effectiveHeight >= 144 && vcodec != "none" && vcodec.isNotEmpty()) {
+                    val existing = bestByHeight[effectiveHeight]
+                    if (existing == null) {
+                        bestByHeight[effectiveHeight] = f
+                    } else {
+                        // Scoring: heavily prioritize formats with real known filesize over manifest-only null sizes
+                        fun score(item: JSONObject): Long {
+                            val iExt = item.optString("ext", "").lowercase()
+                            val iVc = item.optString("vcodec", "").lowercase()
+                            val hasSize = item.optLong("filesize", 0L) > 0L || item.optLong("filesize_approx", 0L) > 0L
+                            var s = 0L
+                            if (hasSize) s += 10000L
+                            if (iExt == "mp4") s += 1000L
+                            if (iVc.contains("av01")) s += 500L
+                            else if (iVc.contains("vp9")) s += 300L
+                            else if (iVc.contains("avc") || iVc.contains("h264")) s += 100L
+                            return s
+                        }
+                        if (score(f) > score(existing)) {
+                            bestByHeight[effectiveHeight] = f
+                        }
                     }
                 }
             }
 
+            val formatsList = mutableListOf<FormatOption>()
             val sortedHeights = bestByHeight.keys.sortedDescending()
-            for (height in sortedHeights) {
-                val vSize = bestByHeight[height] ?: 0L
-                val totalEst = if (vSize > 0L && bestAudioSize > 0L) vSize + bestAudioSize else vSize
+
+            for (h in sortedHeights) {
+                val f = bestByHeight[h]!!
+                var vSize = f.optLong("filesize", 0L)
+                if (vSize <= 0L) vSize = f.optLong("filesize_approx", 0L)
+                if (vSize <= 0L) {
+                    var vbr = f.optDouble("vbr", 0.0)
+                    if (vbr <= 0.0) vbr = f.optDouble("tbr", 0.0)
+                    val maxRealisticVbr = when {
+                        h >= 2160 -> 12000.0 // 4K ~12 Mbps
+                        h >= 1440 -> 6000.0  // 2K ~6 Mbps
+                        h >= 1080 -> 2200.0  // 1080p ~2.2 Mbps
+                        h >= 720  -> 1200.0  // 720p ~1.2 Mbps
+                        h >= 480  -> 600.0   // 480p ~600 kbps
+                        else      -> 350.0   // 360p ~350 kbps
+                    }
+                    val effectiveVbr = if (vbr > 0.0) minOf(vbr, maxRealisticVbr) else maxRealisticVbr
+                    if (duration > 0) {
+                        vSize = ((effectiveVbr * 1000.0 / 8.0) * duration).toLong()
+                    }
+                }
+
+                val totalSize = if (vSize > 0L) {
+                    if (bestAudioSize > 0L) vSize + bestAudioSize else vSize
+                } else 0L
+
+                val sizeStr = if (totalSize > 0L) FormatUtils.formatBytes(totalSize) else ""
+
+                val label = when (h) {
+                    2160 -> "4K • 2160p"
+                    1440 -> "2K • 1440p"
+                    else -> "${h}p"
+                }
+
                 formatsList.add(
                     FormatOption(
-                        id = height.toString(),
-                        label = "${height}p",
-                        height = height,
+                        id = h.toString(),
+                        label = label,
+                        height = h,
                         ext = "mp4",
-                        filesize = totalEst,
-                        filesizeFormatted = FormatUtils.formatBytes(totalEst)
+                        filesize = totalSize,
+                        filesizeFormatted = sizeStr
                     )
                 )
             }
 
+            // Fallback for single format platforms (Instagram, TikTok, Twitter) or when formats has no height
             if (formatsList.isEmpty()) {
-                val defaultHeights = listOf(1080, 720, 480, 360)
-                for (h in defaultHeights) {
+                val rootHeight = jsonRoot.optInt("height", 0)
+                val rootWidth = jsonRoot.optInt("width", 0)
+                val effH = if (rootWidth in 144..rootHeight && rootHeight > rootWidth) rootWidth else rootHeight
+                if (effH > 0) {
                     formatsList.add(
                         FormatOption(
-                            id = h.toString(),
-                            label = "${h}p",
-                            height = h,
+                            id = effH.toString(),
+                            label = "${effH}p",
+                            height = effH,
                             ext = "mp4",
                             filesizeFormatted = ""
                         )
                     )
+                } else {
+                    val defaultHeights = listOf(1080, 720, 480, 360)
+                    for (dh in defaultHeights) {
+                        formatsList.add(
+                            FormatOption(
+                                id = dh.toString(),
+                                label = "${dh}p",
+                                height = dh,
+                                ext = "mp4",
+                                filesizeFormatted = ""
+                            )
+                        )
+                    }
                 }
             }
 
-            // Audio track options
+            // Extract multi-language audio tracks
             val audioLanguages = mutableListOf<AudioLanguage>()
             val seenLangs = mutableSetOf<String>()
             val langNames = mapOf(
                 "en" to "English (Original)",
+                "en-us" to "English (US)",
+                "en-gb" to "English (UK)",
                 "es" to "Spanish (Español)",
+                "es-419" to "Spanish (Latin America)",
                 "hi" to "Hindi (हिन्दी)",
                 "fr" to "French (Français)",
                 "de" to "German (Deutsch)",
                 "ja" to "Japanese (日本語)",
                 "ko" to "Korean (한국어)",
                 "pt" to "Portuguese (Português)",
+                "pt-br" to "Portuguese (Brasil)",
+                "ru" to "Russian (Русский)",
                 "ar" to "Arabic (العربية)",
-                "ru" to "Russian (Русский)"
+                "id" to "Indonesian (Bahasa)",
+                "vi" to "Vietnamese (Tiếng Việt)",
+                "th" to "Thai (ไทย)",
+                "tr" to "Turkish (Türkçe)",
+                "it" to "Italian (Italiano)",
+                "pl" to "Polish (Polski)",
+                "bn" to "Bangla (বাংলা)",
+                "mr" to "Marathi (मराठी)",
+                "ta" to "Tamil (தமிழ்)",
+                "te" to "Telugu (తెలుగు)",
+                "ml" to "Malayalam (മലയാളം)",
+                "pa" to "Punjabi (ਪੰਜਾਬੀ)",
+                "ur" to "Urdu (اردو)"
             )
 
-            for (f in formats) {
-                val note = (f.formatNote ?: "").lowercase()
-                val formatStr = (f.format ?: "").lowercase()
-                for ((code, name) in langNames) {
-                    if ((note.contains(code) || formatStr.contains(code)) && !seenLangs.contains(code)) {
-                        seenLangs.add(code)
-                        audioLanguages.add(AudioLanguage(code = code, name = name, langId = code))
+            for (i in 0 until formatsArray.length()) {
+                val f = formatsArray.optJSONObject(i) ?: continue
+                val vcodec = f.optString("vcodec", "")
+                val isAudioOnly = (vcodec == "none" || vcodec.isEmpty())
+                val rawLang = f.optString("language", "").lowercase().trim()
+                val formatNote = f.optString("format_note", "").lowercase().trim()
+
+                if (isAudioOnly && rawLang.isNotEmpty()) {
+                    val baseLang = rawLang.split("-")[0]
+                    if (baseLang.isNotEmpty() && !seenLangs.contains(baseLang)) {
+                        seenLangs.add(baseLang)
+                        val name = langNames[rawLang] ?: langNames[baseLang] ?: "${baseLang.uppercase()} ($formatNote)"
+                        audioLanguages.add(AudioLanguage(code = baseLang, name = name, langId = rawLang))
                     }
                 }
             }
 
-            val approxFilesize = if (streamInfo.fileSize > 0L) {
-                streamInfo.fileSize
-            } else if (streamInfo.fileSizeApproximate > 0L) {
-                streamInfo.fileSizeApproximate
+            val approxFilesize = if (jsonRoot.optLong("filesize", 0L) > 0L) {
+                jsonRoot.optLong("filesize")
+            } else if (jsonRoot.optLong("filesize_approx", 0L) > 0L) {
+                jsonRoot.optLong("filesize_approx")
             } else {
-                bestByHeight[1080] ?: bestByHeight[720] ?: 0L
+                formatsList.firstOrNull { it.height == 1080 }?.filesize
+                    ?: formatsList.firstOrNull { it.height == 720 }?.filesize
+                    ?: formatsList.firstOrNull()?.filesize ?: 0L
             }
 
             val mediaInfo = MediaInfo(
                 url = url,
-                title = streamInfo.title ?: "Media_${System.currentTimeMillis()}",
-                thumbnail = streamInfo.thumbnail ?: "",
-                duration = streamInfo.duration.toLong(),
-                durationFormatted = FormatUtils.formatDuration(streamInfo.duration.toLong()),
-                uploader = streamInfo.uploader ?: "",
+                title = title,
+                thumbnail = thumbnail,
+                duration = duration,
+                durationFormatted = FormatUtils.formatDuration(duration),
+                uploader = uploader,
                 formats = formatsList,
                 audioLanguages = audioLanguages,
-                approxFilesizeFormatted = FormatUtils.formatBytes(approxFilesize),
-                audioFilesizeFormatted = FormatUtils.formatBytes(bestAudioSize)
+                approxFilesizeFormatted = if (approxFilesize > 0L) FormatUtils.formatBytes(approxFilesize) else "",
+                audioFilesizeFormatted = if (bestAudioSize > 0L) FormatUtils.formatBytes(bestAudioSize) else ""
             )
 
             Result.success(mediaInfo)
@@ -191,6 +362,8 @@ class DownloadRepository(private val context: Context) {
             val msg = e.message?.let {
                 if (it.contains("Sign in to confirm", ignoreCase = true) || it.contains("bot", ignoreCase = true)) {
                     "YouTube requested bot verification. Please import a cookies.txt file in the Cookies tab to bypass."
+                } else if (it.contains("login", ignoreCase = true)) {
+                    "Login required by platform. Import cookies.txt in Settings to access this media."
                 } else {
                     it
                 }
@@ -206,10 +379,11 @@ class DownloadRepository(private val context: Context) {
         formatType: MediaFormatType,
         qualityOption: FormatOption?,
         audioLang: String = "",
+        customJobId: String = "",
         onProgressUpdate: ((DownloadItem) -> Unit)? = null
     ): Result<DownloadItem> = withContext(Dispatchers.IO) {
         val normalizedUrl = normalizeUrl(url)
-        val jobId = UUID.randomUUID().toString().take(8)
+        val jobId = if (customJobId.isNotBlank()) customJobId else UUID.randomUUID().toString().take(8)
         val dlDir = FileUtils.getReclipDownloadDir(context)
 
         val cleanTitle = FormatUtils.sanitizeFilename(title)
@@ -240,7 +414,7 @@ class DownloadRepository(private val context: Context) {
             request.addOption("--no-playlist")
             request.addOption("--geo-bypass")
             request.addOption("--no-check-certificates")
-            request.addOption("--socket-timeout", "20")
+            request.addOption("--socket-timeout", "25")
 
             val cookiePath = cookieManager.getCookiePath()
             if (cookiePath != null) {
@@ -248,58 +422,74 @@ class DownloadRepository(private val context: Context) {
             }
 
             if (formatType == MediaFormatType.AUDIO) {
+                if (audioLang.isNotBlank() && audioLang != "default") {
+                    request.addOption("-f", "bestaudio[language^=$audioLang][ext=m4a]/bestaudio[language^=$audioLang]/bestaudio")
+                }
                 request.addOption("-x")
                 request.addOption("--audio-format", "mp3")
                 request.addOption("--audio-quality", "0")
             } else {
                 val height = qualityOption?.height ?: 1080
-                if (audioLang.isNotBlank() && audioLang != "default") {
+                if (audioLang == "all") {
+                    request.addOption("--audio-multistreams")
+                    request.addOption("-f", "bestvideo[height<=$height]+bestaudio/best[height<=$height]/best")
+                    request.addOption("--merge-output-format", "mkv")
+                } else if (audioLang.isNotBlank() && audioLang != "default") {
                     request.addOption(
                         "-f",
-                        "bestvideo[height<=$height]+bestaudio[language^=$audioLang]/bestvideo[height<=$height]+bestaudio/best[height<=$height]/best"
+                        "bestvideo[height<=$height][ext=mp4]+bestaudio[language^=$audioLang][ext=m4a]/bestvideo[height<=$height]+bestaudio[language^=$audioLang]/bestvideo[height<=$height]+bestaudio/best[height<=$height]/best"
                     )
+                    request.addOption("--merge-output-format", "mp4")
                 } else {
                     request.addOption(
                         "-f",
-                        "bestvideo[height<=$height]+bestaudio/best[height<=$height]/best"
+                        "bestvideo[height<=$height][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=$height]+bestaudio/best[height<=$height]/best"
                     )
+                    request.addOption("--merge-output-format", "mp4")
                 }
-                request.addOption("--merge-output-format", "mp4")
             }
 
             activeJobProcesses[jobId] = jobId
 
+            var lastProgressTime = 0L
+
             YoutubeDL.getInstance().execute(request, jobId) { progressFloat, etaSeconds, line ->
-                val lineStr = line ?: ""
-                var speedStr = ""
-                var sizeStr = ""
-
-                // Extract speed and size if present in line
-                val speedRegex = Pattern.compile("at\\s+([\\w\\.\\/\\s]+)\\s+ETA").matcher(lineStr)
-                if (speedRegex.find()) {
-                    speedStr = speedRegex.group(1)?.trim() ?: ""
-                }
-                val sizeRegex = Pattern.compile("of\\s+([~\\w\\.\\s\\+]+)\\s+at").matcher(lineStr)
-                if (sizeRegex.find()) {
-                    sizeStr = sizeRegex.group(1)?.trim() ?: ""
-                }
-
+                val now = System.currentTimeMillis()
                 val progressSafe = progressFloat.coerceIn(0f, 100f)
-                val statusStr = if (progressSafe >= 99f && (lineStr.contains("ExtractAudio") || lineStr.contains("Merger"))) {
-                    "Processing & Converting..."
-                } else {
-                    String.format("%.1f%%", progressSafe) + if (speedStr.isNotBlank()) " • $speedStr" else ""
-                }
 
-                item = item.copy(
-                    progress = progressSafe,
-                    progressString = statusStr,
-                    speed = speedStr,
-                    eta = FormatUtils.formatEta(etaSeconds),
-                    filesizeFormatted = sizeStr.ifEmpty { item.filesizeFormatted }
-                )
-                updateActiveDownload(item)
-                onProgressUpdate?.invoke(item)
+                // Throttle updates to at most once per 400ms to prevent UI freezing and notification shedding
+                if (now - lastProgressTime >= 400L || progressSafe >= 99f) {
+                    lastProgressTime = now
+                    val lineStr = line ?: ""
+                    var speedStr = ""
+                    var sizeStr = ""
+
+                    // Extract speed and size if present in line
+                    val speedRegex = Pattern.compile("at\\s+([\\w\\.\\/\\s]+)\\s+ETA").matcher(lineStr)
+                    if (speedRegex.find()) {
+                        speedStr = speedRegex.group(1)?.trim() ?: ""
+                    }
+                    val sizeRegex = Pattern.compile("of\\s+([~\\w\\.\\s\\+]+)\\s+at").matcher(lineStr)
+                    if (sizeRegex.find()) {
+                        sizeStr = sizeRegex.group(1)?.trim() ?: ""
+                    }
+
+                    val statusStr = if (progressSafe >= 99f && (lineStr.contains("ExtractAudio") || lineStr.contains("Merger"))) {
+                        "Processing & Converting..."
+                    } else {
+                        String.format("%.1f%%", progressSafe) + if (speedStr.isNotBlank()) " • $speedStr" else ""
+                    }
+
+                    item = item.copy(
+                        progress = progressSafe,
+                        progressString = statusStr,
+                        speed = speedStr,
+                        eta = FormatUtils.formatEta(etaSeconds),
+                        filesizeFormatted = sizeStr.ifEmpty { item.filesizeFormatted }
+                    )
+                    updateActiveDownload(item)
+                    onProgressUpdate?.invoke(item)
+                }
             }
 
             activeJobProcesses.remove(jobId)
@@ -349,6 +539,7 @@ class DownloadRepository(private val context: Context) {
 
             removeActiveDownload(jobId)
             addToHistory(completedItem)
+            _downloadEvents.tryEmit(completedItem)
             onProgressUpdate?.invoke(completedItem)
 
             Result.success(completedItem)
@@ -362,6 +553,7 @@ class DownloadRepository(private val context: Context) {
             )
             removeActiveDownload(jobId)
             addToHistory(errorItem)
+            _downloadEvents.tryEmit(errorItem)
             onProgressUpdate?.invoke(errorItem)
             Result.failure(e)
         }
@@ -381,6 +573,7 @@ class DownloadRepository(private val context: Context) {
             )
             removeActiveDownload(jobId)
             addToHistory(cancelledItem)
+            _downloadEvents.tryEmit(cancelledItem)
         }
     }
 
@@ -398,6 +591,7 @@ class DownloadRepository(private val context: Context) {
         val map = _activeDownloads.value.toMutableMap()
         map[item.id] = item
         _activeDownloads.value = map
+        _downloadEvents.tryEmit(item)
     }
 
     private fun removeActiveDownload(id: String) {

@@ -50,7 +50,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        repository = DownloadRepository(applicationContext)
+        repository = DownloadRepository.getInstance(applicationContext)
         cookieManager = CookieManager(applicationContext)
 
         requestNecessaryPermissions()
@@ -162,35 +162,98 @@ class MainActivity : ComponentActivity() {
 
     private fun observeActiveDownloads() {
         lifecycleScope.launch {
-            repository.activeDownloads.collectLatest { downloadsMap ->
-                downloadsMap.values.forEach { item ->
-                    val obj = JSONObject().apply {
-                        put("id", item.id)
-                        put("url", item.url)
-                        put("title", item.title)
-                        put("thumbnail", item.thumbnail)
-                        put("formatType", item.formatType.name)
-                        put("qualityLabel", item.qualityLabel)
-                        put("status", item.status.name)
-                        put("progress", item.progress)
-                        put("progressString", item.progressString)
-                        put("speed", item.speed)
-                        put("eta", item.eta)
-                        put("filesizeFormatted", item.filesizeFormatted)
-                        put("filePath", item.filePath)
-                        put("fileName", item.fileName)
-                        put("completedAt", item.completedAt)
-                    }
-                    val jsonStr = obj.toString()
-                    runOnUiThread {
-                        webView.evaluateJavascript("window.onAndroidDownloadProgress('$jsonStr');", null)
-                    }
+            repository.downloadEvents.collect { item ->
+                val obj = JSONObject().apply {
+                    put("id", item.id)
+                    put("url", item.url)
+                    put("title", item.title)
+                    put("thumbnail", item.thumbnail)
+                    put("formatType", item.formatType.name)
+                    put("qualityLabel", item.qualityLabel)
+                    put("status", item.status.name)
+                    put("progress", item.progress)
+                    put("progressString", item.progressString)
+                    put("speed", item.speed)
+                    put("eta", item.eta)
+                    put("filesizeFormatted", item.filesizeFormatted)
+                    put("filePath", item.filePath)
+                    put("fileName", item.fileName)
+                    put("completedAt", item.completedAt)
+                }
+                val jsonStr = obj.toString()
+                runOnUiThread {
+                    webView.evaluateJavascript("window.onAndroidDownloadProgress('$jsonStr');", null)
                 }
             }
         }
     }
 
     inner class WebAppInterface {
+
+        @JavascriptInterface
+        fun fetchInfoAsync(url: String, callbackId: String) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val res = repository.fetchMediaInfo(url)
+                    val jsonStr = if (res.isSuccess) {
+                        val info = res.getOrThrow()
+                        val obj = JSONObject().apply {
+                            put("url", info.url)
+                            put("title", info.title)
+                            put("thumbnail", info.thumbnail)
+                            put("duration", info.duration)
+                            put("durationFormatted", info.durationFormatted)
+                            put("uploader", info.uploader)
+                            put("approxFilesizeFormatted", info.approxFilesizeFormatted)
+                            put("audioFilesizeFormatted", info.audioFilesizeFormatted)
+
+                            val formatsArr = JSONArray()
+                            info.formats.forEach { f ->
+                                val fObj = JSONObject().apply {
+                                    put("id", f.id)
+                                    put("label", f.label)
+                                    put("height", f.height)
+                                    put("ext", f.ext)
+                                    put("filesize", f.filesize)
+                                    put("filesizeFormatted", f.filesizeFormatted)
+                                }
+                                formatsArr.put(fObj)
+                            }
+                            put("formats", formatsArr)
+
+                            val langsArr = JSONArray()
+                            info.audioLanguages.forEach { l ->
+                                val lObj = JSONObject().apply {
+                                    put("code", l.code)
+                                    put("name", l.name)
+                                    put("langId", l.langId)
+                                }
+                                langsArr.put(lObj)
+                            }
+                            put("audioLanguages", langsArr)
+                        }
+                        obj.toString()
+                    } else {
+                        val err = JSONObject().apply {
+                            put("error", res.exceptionOrNull()?.message ?: "Failed to fetch media details")
+                        }
+                        err.toString()
+                    }
+                    runOnUiThread {
+                        val safe = JSONObject.quote(jsonStr)
+                        webView.evaluateJavascript("window.onFetchInfoCallback('$callbackId', $safe);", null)
+                    }
+                } catch (e: Exception) {
+                    val err = JSONObject().apply {
+                        put("error", e.message ?: "Extraction failed")
+                    }
+                    val safe = JSONObject.quote(err.toString())
+                    runOnUiThread {
+                        webView.evaluateJavascript("window.onFetchInfoCallback('$callbackId', $safe);", null)
+                    }
+                }
+            }
+        }
 
         @JavascriptInterface
         fun fetchInfo(url: String): String {
@@ -255,6 +318,7 @@ class MainActivity : ComponentActivity() {
                 val qualityId = obj.optString("qualityId", "")
                 val qualityHeight = obj.optInt("qualityHeight", 1080)
                 val audioLang = obj.optString("audioLang", "")
+                val jobId = obj.optString("jobId", "")
 
                 val option = FormatOption(
                     id = qualityId,
@@ -269,7 +333,8 @@ class MainActivity : ComponentActivity() {
                     thumbnail = thumbnail,
                     formatType = formatType,
                     qualityOption = option,
-                    audioLang = audioLang
+                    audioLang = audioLang,
+                    jobId = jobId
                 )
                 "started"
             } catch (e: Exception) {
@@ -367,14 +432,13 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun openFolder() {
             try {
-                val dir = FileUtils.getReclipDownloadDir(this@MainActivity)
-                val intent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(Uri.parse(dir.absolutePath), "resource/folder")
+                val intent = Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 }
-                startActivity(Intent.createChooser(intent, "Open Downloads"))
+                startActivity(intent)
             } catch (e: Exception) {
                 runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Files saved to Downloads/ReClip", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "Downloads saved to: /Download/ReClip", Toast.LENGTH_LONG).show()
                 }
             }
         }

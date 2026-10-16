@@ -19,6 +19,10 @@ import {
   Clock,
   Layers,
   Sparkles,
+  Settings,
+  Globe,
+  ChevronDown,
+  Check,
 } from 'lucide-react';
 import {
   nativeBridge,
@@ -34,7 +38,7 @@ import { TransitionPanel } from './components/motion-primitives/transition-panel
 import { BorderTrail } from './components/motion-primitives/border-trail';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'home' | 'history' | 'cookies' | 'settings'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'history' | 'settings'>('home');
   const [tabIndex, setTabIndex] = useState(0);
   const [darkMode, setDarkMode] = useState(false);
 
@@ -46,6 +50,8 @@ export default function App() {
   const [selectedFormat, setSelectedFormat] = useState<'VIDEO' | 'AUDIO'>('VIDEO');
   const [selectedQuality, setSelectedQuality] = useState<FormatOption | null>(null);
   const [selectedAudioLang, setSelectedAudioLang] = useState<string>('default');
+  const [isLangModalOpen, setIsLangModalOpen] = useState(false);
+  const [langSearch, setLangSearch] = useState('');
 
   // Active Downloads & History
   const [activeDownloads, setActiveDownloads] = useState<DownloadItem[]>([]);
@@ -79,12 +85,15 @@ export default function App() {
 
     // Listen for live download progress updates from Android service
     const unsubProgress = nativeBridge.onProgress((item) => {
-      if (item.status === 'COMPLETED' || item.status === 'ERROR' || item.status === 'CANCELLED') {
-        setActiveDownloads((prev) => prev.filter((d) => d.id !== item.id));
+      if (item.status === 'COMPLETED') {
+        setActiveDownloads((prev) => prev.filter((d) => d.id !== item.id && d.url !== item.url));
         setHistoryItems(nativeBridge.getHistory());
+      } else if (item.status === 'ERROR') {
+        setActiveDownloads((prev) => prev.filter((d) => d.id !== item.id && d.url !== item.url));
+        setErrorMsg(item.progressString || 'Download encountered an error. Retrying or selecting another resolution may help.');
       } else {
         setActiveDownloads((prev) => {
-          const index = prev.findIndex((d) => d.id === item.id);
+          const index = prev.findIndex((d) => d.id === item.id || d.url === item.url);
           if (index >= 0) {
             const next = [...prev];
             next[index] = item;
@@ -114,6 +123,11 @@ export default function App() {
   };
 
   const handleFetch = async (targetUrl?: string) => {
+    // Dismiss soft keyboard immediately so window viewport does not jump
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
     const url = (targetUrl || urlInput).trim();
     if (!url) return;
     setIsLoading(true);
@@ -127,7 +141,7 @@ export default function App() {
         setSelectedQuality(info.formats[0]);
       }
       if (info.audioLanguages && info.audioLanguages.length > 0) {
-        setSelectedAudioLang(info.audioLanguages[0].code);
+        setSelectedAudioLang('default');
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to fetch media details');
@@ -138,11 +152,36 @@ export default function App() {
 
   const handleStartDownload = () => {
     if (!mediaInfo) return;
+    setErrorMsg(null);
+
+    const jobId = 'dl_' + Math.random().toString(36).substring(2, 9);
+
+    // Immediately show starting state so user knows download has begun
+    const tempItem: DownloadItem = {
+      id: jobId,
+      url: mediaInfo.url,
+      title: mediaInfo.title,
+      thumbnail: mediaInfo.thumbnail,
+      formatType: selectedFormat,
+      qualityLabel: selectedQuality?.label || (selectedFormat === 'AUDIO' ? 'MP3 Audio' : '1080p'),
+      status: 'DOWNLOADING',
+      progress: 0.5,
+      progressString: 'Starting download...',
+      speed: '',
+      eta: '',
+      filesizeFormatted: selectedQuality?.filesizeFormatted || '',
+      filePath: '',
+      fileName: '',
+      completedAt: 0,
+    };
+    setActiveDownloads((prev) => [tempItem, ...prev.filter(d => d.url !== mediaInfo.url)]);
+
     nativeBridge.startDownload(
       mediaInfo,
       selectedFormat,
       selectedQuality || undefined,
-      selectedAudioLang
+      selectedAudioLang,
+      jobId
     );
   };
 
@@ -158,15 +197,18 @@ export default function App() {
     }
   };
 
-  const switchTab = (tab: 'home' | 'history' | 'cookies' | 'settings', index: number) => {
+  const getCurrentLanguageName = (code: string, langs?: { code: string; name: string }[]) => {
+    if (code === 'default') return 'Original / Default Track';
+    if (code === 'all') return 'All Tracks / Multi-Audio Stream (MKV)';
+    const found = langs?.find((l) => l.code === code);
+    return found ? found.name : code.toUpperCase();
+  };
+
+  const switchTab = (tab: 'home' | 'history' | 'settings', index: number) => {
     setActiveTab(tab);
     setTabIndex(index);
     if (tab === 'history') {
       setHistoryItems(nativeBridge.getHistory());
-    }
-    if (tab === 'cookies') {
-      setHasCookies(nativeBridge.hasCookies());
-      setCookieText(nativeBridge.getCookieContent());
     }
   };
 
@@ -189,30 +231,19 @@ export default function App() {
               v1.0 Mobile
             </span>
           </div>
-          <div className="h-4">
-            <TextEffect per="word" preset="fade" className="text-[11px] font-mono text-paper-muted dark:text-obsidian-muted uppercase tracking-wider">
-              Native Media Extraction • Anti-Slop
-            </TextEffect>
-          </div>
+          <p className="text-[11px] font-mono text-paper-muted dark:text-obsidian-muted uppercase tracking-wider mt-0.5">
+            Native Media Downloader
+          </p>
         </div>
 
         <div className="flex items-center gap-2">
           {/* Dark mode button */}
           <button
             onClick={toggleDarkMode}
-            className="p-2 rounded-lg border border-paper-border dark:border-obsidian-border bg-paper-surface dark:bg-obsidian-surface text-paper-text dark:text-obsidian-text hover:border-reclip-terracotta transition-colors"
+            className="p-2.5 rounded-xl border border-paper-border dark:border-obsidian-border bg-paper-surface dark:bg-obsidian-surface text-paper-text dark:text-obsidian-text hover:border-reclip-terracotta transition-colors shadow-sm"
             title="Toggle Theme"
           >
             {darkMode ? <Sun size={15} /> : <Moon size={15} />}
-          </button>
-
-          {/* Open Folder */}
-          <button
-            onClick={() => nativeBridge.openFolder()}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-paper-border dark:border-obsidian-border bg-paper-surface dark:bg-obsidian-surface text-[11px] font-mono uppercase text-paper-text dark:text-obsidian-text hover:border-reclip-terracotta transition-colors"
-          >
-            <Folder size={13} className="text-reclip-terracotta" />
-            <span>Files</span>
           </button>
         </div>
       </header>
@@ -249,13 +280,22 @@ export default function App() {
 
                 <button
                   onClick={() => handleFetch()}
+                  onTouchStart={() => {
+                    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+                      try { navigator.vibrate(15); } catch (e) {}
+                    }
+                  }}
                   disabled={!urlInput.trim() || isLoading}
-                  className="w-full py-3 rounded-xl bg-paper-text dark:bg-obsidian-text text-paper-bg dark:text-obsidian-bg font-mono text-xs uppercase font-medium tracking-wider flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50"
+                  className={`w-full py-3.5 rounded-xl font-mono text-xs uppercase font-medium tracking-wider flex items-center justify-center gap-2 select-none transition-all duration-75 cursor-pointer ${
+                    isLoading
+                      ? 'bg-paper-surface dark:bg-obsidian-surface border border-reclip-terracotta text-reclip-terracotta'
+                      : 'bg-paper-text dark:bg-obsidian-text text-paper-bg dark:text-obsidian-bg hover:opacity-90 active:scale-[0.96] active:bg-reclip-terracotta active:text-white shadow-sm'
+                  } disabled:opacity-50 disabled:pointer-events-none`}
                 >
                   {isLoading ? (
                     <>
-                      <RotateCw size={15} className="animate-spin" />
-                      <span>Extracting Stream Info...</span>
+                      <RotateCw size={15} className="animate-spin text-reclip-terracotta" />
+                      <span className="font-semibold text-reclip-terracotta">Extracting Stream Info...</span>
                     </>
                   ) : (
                     <>
@@ -434,24 +474,46 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Audio Dub Language selector if present */}
+                  {/* Audio Dub Language Selector Trigger */}
                   {mediaInfo.audioLanguages?.length > 0 && (
                     <div className="space-y-1.5">
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-paper-muted dark:text-obsidian-muted">
-                        Audio Track / Dub
-                      </span>
-                      <select
-                        value={selectedAudioLang}
-                        onChange={(e) => setSelectedAudioLang(e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg border border-paper-border dark:border-obsidian-border bg-paper-surface dark:bg-obsidian-surface text-xs font-mono"
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono uppercase tracking-wider text-paper-muted dark:text-obsidian-muted flex items-center gap-1.5">
+                          <Globe size={12} className="text-reclip-terracotta" />
+                          <span>Audio Track</span>
+                        </span>
+                        <span className="text-[10px] font-mono text-reclip-terracotta font-medium">
+                          {mediaInfo.audioLanguages.length} Languages
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsLangModalOpen(true)}
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-paper-border dark:border-obsidian-border bg-paper-bg dark:bg-obsidian-bg hover:border-reclip-terracotta/50 active:scale-[0.99] transition-all flex items-center justify-between text-left group"
                       >
-                        <option value="default">Original / Default Track</option>
-                        {mediaInfo.audioLanguages.map((l) => (
-                          <option key={l.code} value={l.code}>
-                            {l.name}
-                          </option>
-                        ))}
-                      </select>
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="p-1 rounded-md bg-reclip-terracotta/10 text-reclip-terracotta shrink-0">
+                            <Globe size={13} />
+                          </div>
+                          <div className="truncate">
+                            <span className="text-xs font-sans font-medium text-paper-text dark:text-obsidian-text block truncate">
+                              {getCurrentLanguageName(selectedAudioLang, mediaInfo.audioLanguages)}
+                            </span>
+                            <span className="text-[10px] font-mono text-paper-muted dark:text-obsidian-muted uppercase">
+                              {selectedAudioLang === 'default'
+                                ? 'Default Original Track'
+                                : selectedAudioLang === 'all'
+                                ? 'Embed All Audio Tracks'
+                                : `Language Code: [${selectedAudioLang.toUpperCase()}]`}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-paper-muted dark:text-obsidian-muted group-hover:text-reclip-terracotta transition-colors shrink-0">
+                          <span className="text-[10px] font-mono uppercase tracking-wider">Change</span>
+                          <ChevronDown size={14} />
+                        </div>
+                      </button>
                     </div>
                   )}
 
@@ -473,21 +535,21 @@ export default function App() {
                 </div>
               )}
 
-              {/* Supported Platforms Ribbon with InfiniteSlider */}
+              {/* Supported Platforms */}
               <div className="pt-4 border-t border-paper-border dark:border-obsidian-border space-y-2">
                 <span className="text-[10px] font-mono uppercase tracking-widest text-paper-muted dark:text-obsidian-muted">
                   Supported Platforms
                 </span>
-                <InfiniteSlider gap={24} duration={35} className="py-2">
+                <div className="flex flex-wrap gap-1.5 py-1">
                   {supportedPlatforms.map((platform, i) => (
                     <span
                       key={i}
-                      className="text-xs font-mono tracking-wider px-2.5 py-1 rounded-md bg-paper-surface dark:bg-obsidian-surface border border-paper-border dark:border-obsidian-border text-paper-muted dark:text-obsidian-muted whitespace-nowrap"
+                      className="text-xs font-mono px-2.5 py-1 rounded-md bg-paper-surface dark:bg-obsidian-surface border border-paper-border dark:border-obsidian-border text-paper-muted dark:text-obsidian-muted"
                     >
                       {platform}
                     </span>
                   ))}
-                </InfiniteSlider>
+                </div>
               </div>
 
             </div>
@@ -568,74 +630,6 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 3: COOKIES BYPASS */}
-          {activeTab === 'cookies' && (
-            <div className="space-y-4">
-              <div>
-                <h2 className="font-serif text-2xl">Cookie Bypass</h2>
-                <p className="text-xs font-mono text-paper-muted dark:text-obsidian-muted mt-0.5">
-                  Bypass YouTube "Sign in to confirm you're not a bot" checks
-                </p>
-              </div>
-
-              {/* Status Banner */}
-              <div
-                className={`p-3.5 rounded-xl border flex items-center gap-3 ${
-                  hasCookies
-                    ? 'border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-300'
-                    : 'border-paper-border dark:border-obsidian-border bg-paper-surface dark:bg-obsidian-surface'
-                }`}
-              >
-                {hasCookies ? <CheckCircle2 size={18} className="text-green-500" /> : <Shield size={18} className="text-paper-muted" />}
-                <div>
-                  <p className="text-xs font-mono font-semibold">
-                    {hasCookies ? 'Cookie File Active' : 'No Cookies Installed'}
-                  </p>
-                  <p className="text-[11px] opacity-80 font-sans">
-                    {hasCookies ? 'All requests will use your authenticated session.' : 'Age-restricted or bot-checked videos may require cookies.'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Cookie Input */}
-              <div className="space-y-2">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-paper-muted dark:text-obsidian-muted">
-                  Paste cookies.txt or Netscape cookie format
-                </span>
-                <textarea
-                  value={cookieText}
-                  onChange={(e) => setCookieText(e.target.value)}
-                  placeholder="# Netscape HTTP Cookie File&#10;.youtube.com&#9;TRUE&#9;/&#9;TRUE&#9;..."
-                  className="w-full h-44 p-3 rounded-xl border border-paper-border dark:border-obsidian-border bg-paper-surface dark:bg-obsidian-surface font-mono text-[11px] focus:outline-none focus:border-reclip-terracotta"
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    nativeBridge.saveCookies(cookieText);
-                    setHasCookies(true);
-                    alert('Cookies saved successfully');
-                  }}
-                  className="flex-1 py-3 rounded-xl bg-reclip-terracotta text-white font-mono text-xs uppercase font-medium hover:bg-reclip-terracottaLight transition-colors"
-                >
-                  Save Cookies
-                </button>
-                {hasCookies && (
-                  <button
-                    onClick={() => {
-                      nativeBridge.clearCookies();
-                      setCookieText('');
-                      setHasCookies(false);
-                    }}
-                    className="px-4 py-3 rounded-xl border border-red-500/30 text-red-500 font-mono text-xs uppercase hover:bg-red-500/10 transition-colors"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
 
           {/* TAB 4: SETTINGS */}
           {activeTab === 'settings' && (
@@ -678,28 +672,21 @@ export default function App() {
               </div>
 
               {/* Storage Path */}
-              <div className="p-4 rounded-xl border border-paper-border dark:border-obsidian-border bg-paper-surface dark:bg-obsidian-surface space-y-2">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-sans font-medium text-sm">Download Directory</h3>
-                    <p className="text-[11px] font-mono text-reclip-terracotta mt-0.5">
-                      /Download/ReClip/
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => nativeBridge.openFolder()}
-                    className="p-2 rounded-lg border border-paper-border dark:border-obsidian-border hover:border-reclip-terracotta"
-                  >
-                    <ExternalLink size={15} />
-                  </button>
-                </div>
+              <div className="p-4 rounded-xl border border-paper-border dark:border-obsidian-border bg-paper-surface dark:bg-obsidian-surface space-y-1.5">
+                <h3 className="font-sans font-medium text-sm">Download Directory</h3>
+                <p className="text-xs font-mono text-reclip-terracotta">
+                  /storage/emulated/0/Download/ReClip/
+                </p>
+                <p className="text-[11px] text-paper-muted dark:text-obsidian-muted pt-1">
+                  Downloaded video and audio are automatically indexed by Android MediaStore for instant playback in your gallery and music apps.
+                </p>
               </div>
 
               {/* Attribution */}
               <div className="p-4 rounded-xl border border-paper-border dark:border-obsidian-border bg-paper-surface dark:bg-obsidian-surface text-[11px] font-mono text-paper-muted dark:text-obsidian-muted space-y-1">
                 <p className="text-paper-text dark:text-obsidian-text font-semibold">ReClip for Android</p>
                 <p>Architecture: Jetpack Compose + React Motion Primitives + yt-dlp + FFmpeg</p>
-                <p>Licensed under MIT. Zero tracking, zero telemetry, zero AI slop.</p>
+                <p>Licensed under MIT. Clean, native, fast and private.</p>
               </div>
             </div>
           )}
@@ -708,53 +695,234 @@ export default function App() {
       </main>
 
       {/* Bottom Navigation with AnimatedBackground */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto p-3 bg-paper-bg/90 dark:bg-obsidian-bg/90 backdrop-blur-md border-t border-paper-border dark:border-obsidian-border z-50">
-        <div className="flex rounded-xl border border-paper-border dark:border-obsidian-border p-1 bg-paper-surface dark:bg-obsidian-surface">
+      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto px-4 pb-[max(0.85rem,env(safe-area-inset-bottom))] pt-2.5 bg-paper-bg/95 dark:bg-obsidian-bg/95 backdrop-blur-lg border-t border-paper-border dark:border-obsidian-border z-50">
+        <div className="grid grid-cols-3 rounded-xl border border-paper-border dark:border-obsidian-border p-1 bg-paper-surface dark:bg-obsidian-surface shadow-sm">
           <AnimatedBackground
             defaultValue={activeTab}
             className="rounded-lg bg-paper-text dark:bg-obsidian-text shadow-sm"
             onValueChange={(id) => {
               if (id === 'home') switchTab('home', 0);
               if (id === 'history') switchTab('history', 1);
-              if (id === 'cookies') switchTab('cookies', 2);
-              if (id === 'settings') switchTab('settings', 3);
+              if (id === 'settings') switchTab('settings', 2);
             }}
           >
             <button
               data-id="home"
-              className={`flex-1 py-2 text-[11px] font-mono font-medium tracking-wider transition-colors text-center ${
-                activeTab === 'home' ? 'text-paper-bg dark:text-obsidian-bg font-semibold' : 'text-paper-muted dark:text-obsidian-muted'
+              className={`w-full flex items-center justify-center gap-1.5 py-2.5 px-2 text-[11px] font-mono font-medium tracking-wider transition-colors text-center select-none ${
+                activeTab === 'home' ? 'text-paper-bg dark:text-obsidian-bg font-semibold' : 'text-paper-muted dark:text-obsidian-muted hover:text-paper-text'
               }`}
             >
-              FETCH
+              <Download size={13} />
+              <span>DOWNLOAD</span>
             </button>
             <button
               data-id="history"
-              className={`flex-1 py-2 text-[11px] font-mono font-medium tracking-wider transition-colors text-center ${
-                activeTab === 'history' ? 'text-paper-bg dark:text-obsidian-bg font-semibold' : 'text-paper-muted dark:text-obsidian-muted'
+              className={`w-full flex items-center justify-center gap-1.5 py-2.5 px-2 text-[11px] font-mono font-medium tracking-wider transition-colors text-center select-none ${
+                activeTab === 'history' ? 'text-paper-bg dark:text-obsidian-bg font-semibold' : 'text-paper-muted dark:text-obsidian-muted hover:text-paper-text'
               }`}
             >
-              HISTORY
-            </button>
-            <button
-              data-id="cookies"
-              className={`flex-1 py-2 text-[11px] font-mono font-medium tracking-wider transition-colors text-center ${
-                activeTab === 'cookies' ? 'text-paper-bg dark:text-obsidian-bg font-semibold' : 'text-paper-muted dark:text-obsidian-muted'
-              }`}
-            >
-              COOKIES
+              <Clock size={13} />
+              <span>HISTORY</span>
             </button>
             <button
               data-id="settings"
-              className={`flex-1 py-2 text-[11px] font-mono font-medium tracking-wider transition-colors text-center ${
-                activeTab === 'settings' ? 'text-paper-bg dark:text-obsidian-bg font-semibold' : 'text-paper-muted dark:text-obsidian-muted'
+              className={`w-full flex items-center justify-center gap-1.5 py-2.5 px-2 text-[11px] font-mono font-medium tracking-wider transition-colors text-center select-none ${
+                activeTab === 'settings' ? 'text-paper-bg dark:text-obsidian-bg font-semibold' : 'text-paper-muted dark:text-obsidian-muted hover:text-paper-text'
               }`}
             >
-              SETTINGS
+              <Settings size={13} />
+              <span>SETTINGS</span>
             </button>
           </AnimatedBackground>
         </div>
       </nav>
+
+      {/* Custom ReClip Audio Track Selection Drawer Modal */}
+      {isLangModalOpen && mediaInfo && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => {
+            setIsLangModalOpen(false);
+            setLangSearch('');
+          }}
+        >
+          <div
+            className="w-full max-w-md max-h-[85vh] bg-paper-surface dark:bg-obsidian-surface border-t sm:border border-paper-border dark:border-obsidian-border rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Mobile Drag Indicator */}
+            <div className="pt-3 pb-1 flex justify-center sm:hidden">
+              <div className="w-10 h-1 rounded-full bg-paper-border dark:bg-obsidian-border" />
+            </div>
+
+            {/* Sheet Header */}
+            <div className="px-5 py-3.5 border-b border-paper-border dark:border-obsidian-border flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 rounded-lg bg-reclip-terracotta/10 text-reclip-terracotta">
+                  <Globe size={16} />
+                </div>
+                <div>
+                  <h3 className="font-serif text-base font-medium">Select Audio Track</h3>
+                  <p className="text-[10px] font-mono text-paper-muted dark:text-obsidian-muted">
+                    {mediaInfo.audioLanguages.length} dubs & localized tracks
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsLangModalOpen(false);
+                  setLangSearch('');
+                }}
+                className="p-1.5 rounded-lg border border-paper-border dark:border-obsidian-border text-paper-muted dark:text-obsidian-muted hover:text-paper-text dark:hover:text-obsidian-text hover:border-reclip-terracotta transition-colors"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Search Filter Bar */}
+            <div className="p-3 border-b border-paper-border dark:border-obsidian-border bg-paper-bg/50 dark:bg-obsidian-bg/50">
+              <div className="relative flex items-center">
+                <Search size={14} className="absolute left-3 text-paper-muted dark:text-obsidian-muted" />
+                <input
+                  type="text"
+                  value={langSearch}
+                  onChange={(e) => setLangSearch(e.target.value)}
+                  placeholder="Search languages (e.g. Spanish, Hindi, French)..."
+                  className="w-full pl-8 pr-8 py-2 rounded-xl text-xs font-mono bg-paper-surface dark:bg-obsidian-surface border border-paper-border dark:border-obsidian-border focus:outline-none focus:border-reclip-terracotta text-paper-text dark:text-obsidian-text placeholder:text-paper-muted/60 transition-colors"
+                />
+                {langSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setLangSearch('')}
+                    className="absolute right-2.5 p-1 text-paper-muted hover:text-paper-text"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Scrollable Language List */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-1.5 max-h-[55vh]">
+              {/* Default Original Option */}
+              {(!langSearch || 'original default'.includes(langSearch.toLowerCase())) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedAudioLang('default');
+                    setIsLangModalOpen(false);
+                    setLangSearch('');
+                  }}
+                  className={`w-full px-3.5 py-2.5 rounded-xl border text-left flex items-center justify-between transition-all ${
+                    selectedAudioLang === 'default'
+                      ? 'border-reclip-terracotta bg-reclip-terracotta/10 text-reclip-terracotta font-medium shadow-sm'
+                      : 'border-paper-border dark:border-obsidian-border bg-paper-surface dark:bg-obsidian-surface text-paper-text dark:text-obsidian-text hover:border-reclip-terracotta/40'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 uppercase tracking-wider font-semibold">
+                      ORIGINAL
+                    </span>
+                    <div>
+                      <span className="text-xs font-sans font-medium block">Original / Default Track</span>
+                      <span className="text-[10px] font-mono opacity-70">Primary video broadcast audio</span>
+                    </div>
+                  </div>
+                  {selectedAudioLang === 'default' && <Check size={16} className="text-reclip-terracotta" />}
+                </button>
+              )}
+
+              {/* Multi-audio Option */}
+              {(!langSearch || 'all tracks multi-audio stream mkv'.includes(langSearch.toLowerCase())) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedAudioLang('all');
+                    setIsLangModalOpen(false);
+                    setLangSearch('');
+                  }}
+                  className={`w-full px-3.5 py-2.5 rounded-xl border text-left flex items-center justify-between transition-all ${
+                    selectedAudioLang === 'all'
+                      ? 'border-reclip-terracotta bg-reclip-terracotta/10 text-reclip-terracotta font-medium shadow-sm'
+                      : 'border-paper-border dark:border-obsidian-border bg-paper-surface dark:bg-obsidian-surface text-paper-text dark:text-obsidian-text hover:border-reclip-terracotta/40'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 uppercase tracking-wider font-semibold">
+                      MULTI
+                    </span>
+                    <div>
+                      <span className="text-xs font-sans font-medium block">All Tracks / Multi-Audio Stream</span>
+                      <span className="text-[10px] font-mono opacity-70">Embeds all languages into MKV</span>
+                    </div>
+                  </div>
+                  {selectedAudioLang === 'all' && <Check size={16} className="text-reclip-terracotta" />}
+                </button>
+              )}
+
+              {/* Dubs Section Label */}
+              <div className="pt-2 pb-1 px-1 flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-paper-muted dark:text-obsidian-muted">
+                  Available Language Dubs
+                </span>
+                <span className="text-[10px] font-mono text-paper-muted dark:text-obsidian-muted">
+                  {mediaInfo.audioLanguages.length} Total
+                </span>
+              </div>
+
+              {/* Filtered Dubs */}
+              {mediaInfo.audioLanguages
+                .filter((l) =>
+                  !langSearch ||
+                  l.name.toLowerCase().includes(langSearch.toLowerCase()) ||
+                  l.code.toLowerCase().includes(langSearch.toLowerCase())
+                )
+                .map((l) => {
+                  const isSelected = selectedAudioLang === l.code;
+                  return (
+                    <button
+                      key={l.code}
+                      type="button"
+                      onClick={() => {
+                        setSelectedAudioLang(l.code);
+                        setIsLangModalOpen(false);
+                        setLangSearch('');
+                      }}
+                      className={`w-full px-3.5 py-2.5 rounded-xl border text-left flex items-center justify-between transition-all ${
+                        isSelected
+                          ? 'border-reclip-terracotta bg-reclip-terracotta/10 text-reclip-terracotta font-medium shadow-sm'
+                          : 'border-paper-border dark:border-obsidian-border bg-paper-surface dark:bg-obsidian-surface text-paper-text dark:text-obsidian-text hover:border-reclip-terracotta/40'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 uppercase tracking-wider shrink-0 font-medium">
+                          {l.code}
+                        </span>
+                        <span className="text-xs font-sans font-medium truncate">{l.name}</span>
+                      </div>
+                      {isSelected && <Check size={16} className="text-reclip-terracotta shrink-0" />}
+                    </button>
+                  );
+                })}
+            </div>
+
+            {/* Bottom Done / Close Button */}
+            <div className="p-3 border-t border-paper-border dark:border-obsidian-border bg-paper-surface dark:bg-obsidian-surface">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsLangModalOpen(false);
+                  setLangSearch('');
+                }}
+                className="w-full py-2.5 rounded-xl bg-paper-bg dark:bg-obsidian-bg border border-paper-border dark:border-obsidian-border text-paper-text dark:text-obsidian-text text-xs font-mono font-medium hover:border-reclip-terracotta transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
