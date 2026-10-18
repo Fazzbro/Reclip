@@ -163,7 +163,132 @@ def normalize_url(url):
     yt_shorts = re.search(r'youtube\.com/shorts/([a-zA-Z0-9_-]{11})', url)
     if yt_shorts:
         return f"https://www.youtube.com/watch?v={yt_shorts.group(1)}"
+    reddit_match = re.search(r'(https?://(?:www\.|v\.)?reddit\.com/(?:r|user)/[a-zA-Z0-9_]+/(?:comments|s)/[a-zA-Z0-9_]+(?:/[^/?#]+)?)', url)
+    if reddit_match:
+        return reddit_match.group(1)
+    reddit_short = re.search(r'(https?://redd\.it/[a-zA-Z0-9_]+)', url)
+    if reddit_short:
+        return reddit_short.group(1)
     return url
+
+
+def resolve_reddit_url(url):
+    """
+    Resolves Reddit posts, /s/ share links, redd.it, or v.redd.it to a direct HLS m3u8 stream or mp4 URL.
+    Returns dict: {'stream_url': str, 'title': str, 'thumbnail': str} or None.
+    """
+    if not url:
+        return None
+    url = url.strip()
+
+    v_match = re.search(r'https?://v\.redd\.it/([a-zA-Z0-9_]+)', url)
+    if v_match:
+        vid = v_match.group(1)
+        return {
+            'stream_url': f"https://v.redd.it/{vid}/HLSPlaylist.m3u8",
+            'title': f"Reddit_{vid}",
+            'thumbnail': ""
+        }
+
+    if not any(domain in url for domain in ("reddit.com", "redd.it")):
+        return None
+
+    import urllib.request
+    import urllib.parse
+    import http.cookiejar
+
+    cj = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+    }
+
+    clean_url = url.split('?')[0]
+    canonical_url = clean_url
+    html = ""
+    try:
+        req = urllib.request.Request(clean_url, headers=headers)
+        with opener.open(req, timeout=12) as resp:
+            canonical_url = resp.geturl().split('?')[0]
+            html = resp.read().decode('utf-8', errors='ignore')
+    except Exception:
+        html = ""
+
+    token_match = re.search(r'name=[\'"]jsc_token[\'"]\s+value=[\'"]([^\'"]+)[\'"]', html)
+    arg_match = re.search(r'await\(async\s+e=>e\+e\)\([\'"]([^\'"]+)[\'"]\)', html)
+
+    if token_match and arg_match:
+        token = token_match.group(1)
+        arg = arg_match.group(1)
+        solution = arg + arg
+        query = urllib.parse.urlencode({
+            'solution': solution,
+            'js_challenge': '1',
+            'jsc_token': token,
+            'jsc_orig_r': ''
+        })
+        base = canonical_url.split('?')[0]
+        challenge_url = f"{base}?{query}"
+        try:
+            req2 = urllib.request.Request(challenge_url, headers=headers)
+            with opener.open(req2, timeout=12) as resp2:
+                html = resp2.read().decode('utf-8', errors='ignore')
+        except Exception:
+            pass
+
+    title = ""
+    thumbnail = ""
+    stream_url = ""
+
+    t_match = re.search(r'<shreddit-title[^>]*\stitle=[\'"]([^\'"]+)[\'"]', html)
+    if t_match:
+        title = re.sub(r'\s*:\s*r/\w+.*$', '', t_match.group(1)).strip()
+    if not title:
+        slug_match = re.search(r'/comments/[a-zA-Z0-9]+/([^/?#]+)', canonical_url)
+        if slug_match:
+            title = slug_match.group(1).replace('_', ' ').replace('-', ' ').title()
+
+    p_match = re.search(r'poster=[\'"]([^\'"]+)[\'"]', html)
+    if p_match:
+        thumbnail = p_match.group(1).replace('&amp;', '&')
+    if not thumbnail:
+        og_img = re.search(r'property=[\'"]og:image[\'"]\s+content=[\'"]([^\'"]+)[\'"]', html)
+        if og_img:
+            thumbnail = og_img.group(1).replace('&amp;', '&')
+
+    shreddit_src = re.search(r'<shreddit-player[^>]*\ssrc=[\'"]([^\'"]+)[\'"]', html)
+    if shreddit_src:
+        stream_url = urllib.parse.unquote(shreddit_src.group(1)).replace('&amp;', '&')
+    else:
+        v_in_html = re.search(r'https?://v\.redd\.it/([a-zA-Z0-9_]+)', html)
+        if v_in_html:
+            stream_url = f"https://v.redd.it/{v_in_html.group(1)}/HLSPlaylist.m3u8"
+
+    if not stream_url:
+        try:
+            rs_url = f"https://rapidsave.com/info?url={urllib.parse.quote(canonical_url)}"
+            req_rs = urllib.request.Request(rs_url, headers=headers)
+            with urllib.request.urlopen(req_rs, timeout=8) as resp_rs:
+                rs_html = resp_rs.read().decode('utf-8', errors='ignore')
+                rs_v = re.search(r'https?://v\.redd\.it/([a-zA-Z0-9_]+)', rs_html)
+                if rs_v:
+                    stream_url = f"https://v.redd.it/{rs_v.group(1)}/HLSPlaylist.m3u8"
+                else:
+                    rs_dl = re.search(r'href=[\'"](https?://sd\.rapidsave\.com/download\.php\?[^\'"]+)[\'"]', rs_html)
+                    if rs_dl:
+                        stream_url = rs_dl.group(1).replace('&amp;', '&')
+        except Exception:
+            pass
+
+    if stream_url:
+        return {
+            'stream_url': stream_url,
+            'title': title or "Reddit Video",
+            'thumbnail': thumbnail
+        }
+    return None
 
 
 def run_download(job_id, url, format_choice, format_id, cookies_browser="", audio_lang=""):
@@ -172,6 +297,11 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser="", audi
     job["progress_str"] = "Downloading..."
     job["filesize"] = ""
     url = normalize_url(url)
+    reddit_meta = resolve_reddit_url(url)
+    if reddit_meta:
+        url = reddit_meta['stream_url']
+        if not job.get("title") and reddit_meta.get("title"):
+            job["title"] = reddit_meta["title"]
     dl_dir = get_download_dir()
     os.makedirs(dl_dir, exist_ok=True)
     out_template = os.path.join(dl_dir, f"{job_id}___%(title).140B.%(ext)s")
@@ -388,6 +518,9 @@ def get_info():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
 
+    reddit_meta = resolve_reddit_url(url)
+    target_url = reddit_meta['stream_url'] if reddit_meta else url
+
     cmd = [
         YTDLP_BIN,
         "-4",
@@ -403,7 +536,7 @@ def get_info():
         cmd += ["--cookies", cookies_txt_path]
     elif cookies:
         cmd += ["--cookies-from-browser", cookies]
-    cmd.append(url)
+    cmd.append(target_url)
     try:
         result = subprocess.run(
             cmd,
@@ -418,6 +551,13 @@ def get_info():
             return jsonify({"error": result.stderr.strip().split("\n")[-1]}), 400
 
         info = parse_ytdlp_json(result.stdout)
+        if reddit_meta:
+            if not info.get("title") or info.get("title") in ("HLSPlaylist", "DASHPlaylist"):
+                info["title"] = reddit_meta.get("title") or "Reddit Video"
+            if not info.get("thumbnail") and reddit_meta.get("thumbnail"):
+                info["thumbnail"] = reddit_meta.get("thumbnail")
+            if not info.get("uploader"):
+                info["uploader"] = "Reddit"
 
         # Build resolution choices — keep best format per height
         best_by_height = {}
@@ -516,6 +656,7 @@ def get_info():
                     })
 
         return jsonify({
+            "url": target_url,
             "title": info.get("title", ""),
             "thumbnail": info.get("thumbnail", ""),
             "duration": info.get("duration"),

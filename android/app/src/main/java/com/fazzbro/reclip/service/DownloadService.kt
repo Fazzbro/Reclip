@@ -48,7 +48,8 @@ class DownloadService : Service() {
             thumbnail: String,
             formatType: MediaFormatType,
             qualityOption: FormatOption?,
-            audioLang: String = ""
+            audioLang: String = "",
+            jobId: String = ""
         ) {
             val intent = Intent(context, DownloadService::class.java).apply {
                 action = ACTION_START_DOWNLOAD
@@ -60,6 +61,9 @@ class DownloadService : Service() {
                 putExtra(EXTRA_QUALITY_ID, qualityOption?.id ?: "")
                 putExtra(EXTRA_QUALITY_HEIGHT, qualityOption?.height ?: 1080)
                 putExtra(EXTRA_AUDIO_LANG, audioLang)
+                if (jobId.isNotBlank()) {
+                    putExtra(EXTRA_JOB_ID, jobId)
+                }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -94,6 +98,7 @@ class DownloadService : Service() {
                 val qualityId = intent.getStringExtra(EXTRA_QUALITY_ID) ?: ""
                 val qualityHeight = intent.getIntExtra(EXTRA_QUALITY_HEIGHT, 1080)
                 val audioLang = intent.getStringExtra(EXTRA_AUDIO_LANG) ?: ""
+                val jobId = intent.getStringExtra(EXTRA_JOB_ID) ?: ""
 
                 val option = FormatOption(
                     id = qualityId,
@@ -111,6 +116,7 @@ class DownloadService : Service() {
                         formatType = formatType,
                         qualityOption = option,
                         audioLang = audioLang,
+                        customJobId = jobId,
                         onProgressUpdate = { item ->
                             updateNotification(
                                 title = item.title,

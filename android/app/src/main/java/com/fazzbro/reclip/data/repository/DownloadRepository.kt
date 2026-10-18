@@ -12,6 +12,8 @@ import com.fazzbro.reclip.data.model.MediaInfo
 import com.fazzbro.reclip.util.CookieManager
 import com.fazzbro.reclip.util.FileUtils
 import com.fazzbro.reclip.util.FormatUtils
+import com.fazzbro.reclip.util.RedditResolver
+import com.fazzbro.reclip.util.RedditMediaResult
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import com.yausername.youtubedl_android.mapper.VideoInfo
@@ -98,13 +100,31 @@ class DownloadRepository(private val context: Context) {
             return xMatch.group(1)
         }
 
+        // Reddit: clean query parameters (e.g. ?utm_source=... &utm_medium=...)
+        val redditMatch = Pattern.compile("(https?://(?:www\\.|v\\.)?reddit\\.com/(?:r|user)/[a-zA-Z0-9_]+/(?:comments|s)/[a-zA-Z0-9_]+(?:/[^/?#]+)?)").matcher(url)
+        if (redditMatch.find()) {
+            return redditMatch.group(1)
+        }
+        val reddItMatch = Pattern.compile("(https?://redd\\.it/[a-zA-Z0-9_]+)").matcher(url)
+        if (reddItMatch.find()) {
+            return reddItMatch.group(1)
+        }
+
         return url
     }
 
     suspend fun fetchMediaInfo(rawUrl: String): Result<MediaInfo> = withContext(Dispatchers.IO) {
-        val url = normalizeUrl(rawUrl)
+        var url = normalizeUrl(rawUrl)
         if (url.isBlank()) {
             return@withContext Result.failure(IllegalArgumentException("Please enter a valid URL"))
+        }
+
+        var redditMeta: RedditMediaResult? = null
+        if (RedditResolver.isRedditUrl(url)) {
+            redditMeta = RedditResolver.resolve(url)
+            if (redditMeta != null && redditMeta.streamUrl.isNotBlank()) {
+                url = redditMeta.streamUrl
+            }
         }
 
         try {
@@ -138,10 +158,26 @@ class DownloadRepository(private val context: Context) {
                 jsonRoot = JSONObject(rawOutput)
             }
 
-            val title = jsonRoot.optString("title").ifBlank { "Media_${System.currentTimeMillis()}" }
-            val thumbnail = jsonRoot.optString("thumbnail", "")
+            val rawTitle = jsonRoot.optString("title")
+            val title = if (redditMeta != null && redditMeta.title.isNotBlank()) {
+                redditMeta.title
+            } else if (rawTitle.isBlank() || rawTitle.equals("HLSPlaylist", ignoreCase = true) || rawTitle.equals("DASHPlaylist", ignoreCase = true)) {
+                redditMeta?.title ?: "Media_${System.currentTimeMillis()}"
+            } else {
+                rawTitle
+            }
+
+            val rawThumb = jsonRoot.optString("thumbnail", "")
+            val thumbnail = if (redditMeta != null && redditMeta.thumbnail.isNotBlank()) {
+                redditMeta.thumbnail
+            } else {
+                rawThumb
+            }
+
             val duration = jsonRoot.optLong("duration", 0L)
-            val uploader = jsonRoot.optString("uploader", "")
+            val uploader = jsonRoot.optString("uploader", "").ifBlank {
+                if (redditMeta != null) "Reddit" else ""
+            }
             val formatsArray = jsonRoot.optJSONArray("formats") ?: JSONArray()
 
             val bestByHeight = mutableMapOf<Int, JSONObject>()
@@ -344,7 +380,7 @@ class DownloadRepository(private val context: Context) {
             }
 
             val mediaInfo = MediaInfo(
-                url = url,
+                url = if (redditMeta != null) redditMeta.streamUrl else url,
                 title = title,
                 thumbnail = thumbnail,
                 duration = duration,
@@ -382,7 +418,17 @@ class DownloadRepository(private val context: Context) {
         customJobId: String = "",
         onProgressUpdate: ((DownloadItem) -> Unit)? = null
     ): Result<DownloadItem> = withContext(Dispatchers.IO) {
-        val normalizedUrl = normalizeUrl(url)
+        var normalizedUrl = normalizeUrl(url)
+        if (RedditResolver.isRedditUrl(normalizedUrl) &&
+            !normalizedUrl.contains("HLSPlaylist") &&
+            !normalizedUrl.contains("DASHPlaylist") &&
+            !normalizedUrl.endsWith(".mp4")
+        ) {
+            val resolved = RedditResolver.resolve(normalizedUrl)
+            if (resolved != null && resolved.streamUrl.isNotBlank()) {
+                normalizedUrl = resolved.streamUrl
+            }
+        }
         val jobId = if (customJobId.isNotBlank()) customJobId else UUID.randomUUID().toString().take(8)
         val dlDir = FileUtils.getReclipDownloadDir(context)
 

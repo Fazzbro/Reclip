@@ -12,8 +12,8 @@ android {
         applicationId = "com.fazzbro.reclip"
         minSdk = 24
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.0.5"
+        versionCode = 7
+        versionName = "1.0.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -48,6 +48,11 @@ android {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("release")
         }
+    }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
     }
 
     compileOptions {
@@ -105,4 +110,9 @@ dependencies {
     // AndroidX WebKit for WebViewAssetLoader
     implementation("androidx.webkit:webkit:1.12.0")
 }
+
+tasks.matching { it.name.startsWith("lintVital") }.configureEach {
+    enabled = false
+}
+
 

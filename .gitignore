@@ -14,6 +14,7 @@ assets/*.mov
 .env.production
 .env.development
 *.apk
+*.idsig
 *.zip
 ReClip_Windows_*/
 ReClip_Android_*/
@@ -28,6 +29,7 @@ dist/
 android/.gradle/
 android/**/build/
 android/.kotlin/
+android/local.properties
 .gradle/
 
 # Frontend
