@@ -37,11 +37,11 @@
 ## Downloads & Installation
 
 ### Android (.apk)
-1. Download the latest **[`ReClip_v1.0.5_Android.apk`](https://github.com/Fazzbro/Reclip/releases/tag/v1.3.1)** from [GitHub Releases](https://github.com/Fazzbro/Reclip/releases/tag/v1.3.1).
+1. Download the latest **[`ReClip_v1.0.6_Android.apk`](https://github.com/Fazzbro/Reclip/releases/tag/v1.3.2)** from [GitHub Releases](https://github.com/Fazzbro/Reclip/releases/tag/v1.3.2).
 2. Install on any Android device running Android 7.0 (API 24) or newer.
 
 ```bash
-adb install ReClip_v1.0.5_Android.apk
+adb install ReClip_v1.0.6_Android.apk
 ```
 
 ### Windows Desktop (.exe)
