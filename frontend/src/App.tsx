@@ -222,7 +222,7 @@ export default function App() {
   ];
 
   return (
-    <div className="min-h-screen flex flex-col justify-between max-w-md mx-auto relative px-4 pt-6 pb-24 sm:px-6">
+    <div className="min-h-[100dvh] flex flex-col max-w-md mx-auto relative px-4 pt-6 pb-28 sm:px-6">
       
       {/* Top Header */}
       <header className="flex items-center justify-between pb-4 border-b border-paper-border dark:border-obsidian-border">

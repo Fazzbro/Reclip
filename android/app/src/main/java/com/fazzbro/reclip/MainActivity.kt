@@ -2,6 +2,7 @@ package com.fazzbro.reclip
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -303,6 +304,16 @@ class MainActivity : ComponentActivity() {
                     }
                     err.toString()
                 }
+            }
+        }
+
+        @JavascriptInterface
+        fun hideKeyboard() {
+            runOnUiThread {
+                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+                val token = currentFocus?.windowToken ?: webView.windowToken
+                imm?.hideSoftInputFromWindow(token, 0)
+                webView.clearFocus()
             }
         }
 

@@ -47,7 +47,9 @@ export interface DownloadItem {
 declare global {
   interface Window {
     AndroidBridge?: {
+      fetchInfoAsync?: (url: string, callbackId: string) => void;
       fetchInfo: (url: string) => string;
+      hideKeyboard?: () => void;
       startDownload: (requestJson: string) => string;
       pauseDownload?: (jobId: string) => void;
       resumeDownload?: (jobId: string) => void;
@@ -65,6 +67,7 @@ declare global {
       updateYtDlp: () => string;
       onUrlReceived?: (url: string) => void;
       onDownloadProgress?: (itemJson: string) => void;
+      onFetchInfoCallback?: (callbackId: string, resultJson: string) => void;
     };
   }
 }
@@ -88,6 +91,13 @@ class NativeBridgeService {
       (window as any).onAndroidUrlReceived = (url: string) => {
         this.urlListeners.forEach((fn) => fn(url));
       };
+
+      (window as any).onFetchInfoCallback = (callbackId: string, resultJson: string) => {
+        const cb = (window as any)[`__fetchCb_${callbackId}`];
+        if (cb) {
+          cb(resultJson);
+        }
+      };
     }
   }
 
@@ -95,18 +105,59 @@ class NativeBridgeService {
     return typeof window !== 'undefined' && Boolean(window.AndroidBridge);
   }
 
+  hideKeyboard() {
+    if (this.isAndroidApp() && window.AndroidBridge?.hideKeyboard) {
+      window.AndroidBridge.hideKeyboard();
+    }
+  }
+
   async fetchInfo(url: string): Promise<MediaInfo> {
-    if (this.isAndroidApp() && window.AndroidBridge?.fetchInfo) {
-      const resultJson = window.AndroidBridge.fetchInfo(url);
-      const parsed = JSON.parse(resultJson);
-      if (parsed.error) {
-        throw new Error(parsed.error);
+    if (this.isAndroidApp()) {
+      if (window.AndroidBridge?.hideKeyboard) {
+        window.AndroidBridge.hideKeyboard();
       }
-      return parsed as MediaInfo;
+
+      // Non-blocking asynchronous bridge (prevents UI freeze and viewport jump)
+      if (window.AndroidBridge?.fetchInfoAsync) {
+        return new Promise<MediaInfo>((resolve, reject) => {
+          const callbackId = 'cb_' + Math.random().toString(36).substring(2, 9);
+          const timeout = setTimeout(() => {
+            delete (window as any)[`__fetchCb_${callbackId}`];
+            reject(new Error('Connection timed out while fetching media info'));
+          }, 45000);
+
+          (window as any)[`__fetchCb_${callbackId}`] = (resultJson: string) => {
+            clearTimeout(timeout);
+            delete (window as any)[`__fetchCb_${callbackId}`];
+            try {
+              const parsed = JSON.parse(resultJson);
+              if (parsed.error) {
+                reject(new Error(parsed.error));
+              } else {
+                resolve(parsed as MediaInfo);
+              }
+            } catch (e: any) {
+              reject(new Error('Failed to parse media details: ' + e.message));
+            }
+          };
+
+          window.AndroidBridge!.fetchInfoAsync(url, callbackId);
+        });
+      }
+
+      // Synchronous fallback
+      if (window.AndroidBridge?.fetchInfo) {
+        const resultJson = window.AndroidBridge.fetchInfo(url);
+        const parsed = JSON.parse(resultJson);
+        if (parsed.error) {
+          throw new Error(parsed.error);
+        }
+        return parsed as MediaInfo;
+      }
     }
 
     // Web / Dev mock fallback
-    await new Promise((r) => setTimeout(r, 900));
+    await new Promise((r) => setTimeout(r, 600));
     return {
       url,
       title: 'Sample Video — ReClip Ultra High Definition',
@@ -133,8 +184,10 @@ class NativeBridgeService {
     info: MediaInfo,
     formatType: 'VIDEO' | 'AUDIO',
     qualityOption?: FormatOption,
-    audioLang: string = ''
+    audioLang: string = '',
+    jobId: string = ''
   ): string {
+    const customId = jobId || 'dl_' + Math.random().toString(36).substring(2, 9);
     const payload = {
       url: info.url,
       title: info.title,
@@ -144,6 +197,7 @@ class NativeBridgeService {
       qualityId: qualityOption?.id || '',
       qualityHeight: qualityOption?.height || 1080,
       audioLang,
+      jobId: customId,
     };
 
     if (this.isAndroidApp() && window.AndroidBridge?.startDownload) {
@@ -151,12 +205,11 @@ class NativeBridgeService {
     }
 
     // Mock progress in browser/dev
-    const mockId = Math.random().toString(36).substring(2, 9);
     let progress = 0;
     const interval = setInterval(() => {
       progress += 10;
       const item: DownloadItem = {
-        id: mockId,
+        id: customId,
         url: info.url,
         title: info.title,
         thumbnail: info.thumbnail,
@@ -176,7 +229,7 @@ class NativeBridgeService {
       if (progress >= 100) clearInterval(interval);
     }, 600);
 
-    return mockId;
+    return customId;
   }
 
   pauseDownload(jobId: string) {
