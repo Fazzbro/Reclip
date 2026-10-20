@@ -29,8 +29,19 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.Collections
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.regex.Pattern
+
+data class DownloadConfig(
+    val url: String,
+    val title: String,
+    val thumbnail: String,
+    val formatType: MediaFormatType,
+    val qualityOption: FormatOption?,
+    val audioLang: String
+)
 
 class DownloadRepository(private val context: Context) {
 
@@ -61,7 +72,10 @@ class DownloadRepository(private val context: Context) {
     private val _downloadHistory = MutableStateFlow<List<DownloadItem>>(emptyList())
     val downloadHistory: StateFlow<List<DownloadItem>> = _downloadHistory.asStateFlow()
 
-    private val activeJobProcesses = mutableMapOf<String, String>()
+    private val activeJobProcesses = ConcurrentHashMap<String, String>()
+    private val downloadConfigs = ConcurrentHashMap<String, DownloadConfig>()
+    private val pausedJobs = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    private val cancelledJobs = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
     init {
         loadHistory()
@@ -183,7 +197,7 @@ class DownloadRepository(private val context: Context) {
             val bestByHeight = mutableMapOf<Int, JSONObject>()
             var bestAudioSize = 0L
 
-            // 1. Identify default audio track size (format 140 / 128kbps AAC or best known audio stream)
+            // 1. Identify default audio track size
             for (i in 0 until formatsArray.length()) {
                 val f = formatsArray.optJSONObject(i) ?: continue
                 val vcodec = f.optString("vcodec", "")
@@ -203,11 +217,10 @@ class DownloadRepository(private val context: Context) {
                 }
             }
             if (bestAudioSize <= 0L && duration > 0L) {
-                // Realistic 128 kbps standard audio track size
                 bestAudioSize = ((128.0 * 1000.0 / 8.0) * duration).toLong()
             }
 
-            // 2. Select realistic video stream matching yt-dlp's actual download preference
+            // 2. Select realistic video stream
             for (i in 0 until formatsArray.length()) {
                 val f = formatsArray.optJSONObject(i) ?: continue
                 val height = f.optInt("height", 0)
@@ -220,7 +233,6 @@ class DownloadRepository(private val context: Context) {
                     if (existing == null) {
                         bestByHeight[effectiveHeight] = f
                     } else {
-                        // Scoring: heavily prioritize formats with real known filesize over manifest-only null sizes
                         fun score(item: JSONObject): Long {
                             val iExt = item.optString("ext", "").lowercase()
                             val iVc = item.optString("vcodec", "").lowercase()
@@ -251,12 +263,12 @@ class DownloadRepository(private val context: Context) {
                     var vbr = f.optDouble("vbr", 0.0)
                     if (vbr <= 0.0) vbr = f.optDouble("tbr", 0.0)
                     val maxRealisticVbr = when {
-                        h >= 2160 -> 12000.0 // 4K ~12 Mbps
-                        h >= 1440 -> 6000.0  // 2K ~6 Mbps
-                        h >= 1080 -> 2200.0  // 1080p ~2.2 Mbps
-                        h >= 720  -> 1200.0  // 720p ~1.2 Mbps
-                        h >= 480  -> 600.0   // 480p ~600 kbps
-                        else      -> 350.0   // 360p ~350 kbps
+                        h >= 2160 -> 12000.0
+                        h >= 1440 -> 6000.0
+                        h >= 1080 -> 2200.0
+                        h >= 720  -> 1200.0
+                        h >= 480  -> 600.0
+                        else      -> 350.0
                     }
                     val effectiveVbr = if (vbr > 0.0) minOf(vbr, maxRealisticVbr) else maxRealisticVbr
                     if (duration > 0) {
@@ -288,7 +300,6 @@ class DownloadRepository(private val context: Context) {
                 )
             }
 
-            // Fallback for single format platforms (Instagram, TikTok, Twitter) or when formats has no height
             if (formatsList.isEmpty()) {
                 val rootHeight = jsonRoot.optInt("height", 0)
                 val rootWidth = jsonRoot.optInt("width", 0)
@@ -432,10 +443,27 @@ class DownloadRepository(private val context: Context) {
         val jobId = if (customJobId.isNotBlank()) customJobId else UUID.randomUUID().toString().take(8)
         val dlDir = FileUtils.getReclipDownloadDir(context)
 
+        // Save config for pause/resume support
+        downloadConfigs[jobId] = DownloadConfig(
+            url = url,
+            title = title,
+            thumbnail = thumbnail,
+            formatType = formatType,
+            qualityOption = qualityOption,
+            audioLang = audioLang
+        )
+        pausedJobs.remove(jobId)
+        cancelledJobs.remove(jobId)
+
         val cleanTitle = FormatUtils.sanitizeFilename(title)
         val ext = if (formatType == MediaFormatType.AUDIO) "mp3" else "mp4"
 
-        var item = DownloadItem(
+        // Retain any existing progress if resuming
+        val existingItem = _activeDownloads.value[jobId]
+        var item = existingItem?.copy(
+            status = DownloadStatus.DOWNLOADING,
+            progressString = if (existingItem.progress > 0f) "Resuming download..." else "Starting download..."
+        ) ?: DownloadItem(
             id = jobId,
             url = normalizedUrl,
             title = cleanTitle,
@@ -457,6 +485,7 @@ class DownloadRepository(private val context: Context) {
             val outputTemplate = "${dlDir.absolutePath}/${jobId}___%(title).100B.%(ext)s"
             request.addOption("-o", outputTemplate)
             request.addOption("--newline")
+            request.addOption("--continue")
             request.addOption("--no-playlist")
             request.addOption("--geo-bypass")
             request.addOption("--no-check-certificates")
@@ -498,39 +527,117 @@ class DownloadRepository(private val context: Context) {
             activeJobProcesses[jobId] = jobId
 
             var lastProgressTime = 0L
+            var currentStreamCount = 0
+            var lastParsedPercent = item.progress
+
+            val percentRegex = Pattern.compile("(?:\\[download\\]\\s+)?([0-9]+(?:\\.[0-9]+)?)\\s*%")
+            val speedRegex = Pattern.compile("at\\s+([0-9]+(?:\\.[0-9]+)?\\s*[kKmMgG]?[iI]?[bB]/s)")
+            val sizeRegex = Pattern.compile("of\\s+(~?\\s*[0-9]+(?:\\.[0-9]+)?\\s*[kKmMgG]?[iI]?[bB])")
+            val etaRegex = Pattern.compile("ETA\\s+([0-9:]+)")
+            val fragRegex = Pattern.compile("\\(frag\\s+([0-9]+)/([0-9]+)\\)")
 
             YoutubeDL.getInstance().execute(request, jobId) { progressFloat, etaSeconds, line ->
+                // Check if user paused or cancelled while running
+                if (pausedJobs.contains(jobId) || cancelledJobs.contains(jobId)) {
+                    return@execute
+                }
+
                 val now = System.currentTimeMillis()
-                val progressSafe = progressFloat.coerceIn(0f, 100f)
+                val lineStr = line ?: ""
 
-                // Throttle updates to at most once per 400ms to prevent UI freezing and notification shedding
-                if (now - lastProgressTime >= 400L || progressSafe >= 99f) {
+                if (lineStr.contains("[download] Destination:")) {
+                    currentStreamCount++
+                }
+
+                // 1. Direct percentage extraction from stdout line (bypasses youtubedl-android regex limitation)
+                var extractedPercent: Float? = null
+                val pMatch = percentRegex.matcher(lineStr)
+                if (pMatch.find()) {
+                    extractedPercent = pMatch.group(1)?.toFloatOrNull()
+                }
+
+                // 2. Fragment ratio extraction for HLS / DASH streams (e.g. Reddit, Twitter, TikTok)
+                if (extractedPercent == null) {
+                    val fMatch = fragRegex.matcher(lineStr)
+                    if (fMatch.find()) {
+                        val curFrag = fMatch.group(1)?.toFloatOrNull() ?: 0f
+                        val totFrag = fMatch.group(2)?.toFloatOrNull() ?: 1f
+                        if (totFrag > 0f) {
+                            extractedPercent = (curFrag / totFrag) * 100f
+                        }
+                    }
+                }
+
+                // 3. Fallback to progressFloat from youtubedl-android
+                if (extractedPercent == null && progressFloat > 0f) {
+                    extractedPercent = progressFloat
+                }
+
+                if (extractedPercent != null) {
+                    lastParsedPercent = maxOf(lastParsedPercent, extractedPercent.coerceIn(0f, 100f))
+                }
+
+                // Extract speed
+                var speedStr = ""
+                val sMatch = speedRegex.matcher(lineStr)
+                if (sMatch.find()) {
+                    speedStr = sMatch.group(1)?.trim() ?: ""
+                }
+
+                // Extract size
+                var sizeStr = ""
+                val szMatch = sizeRegex.matcher(lineStr)
+                if (szMatch.find()) {
+                    sizeStr = szMatch.group(1)?.trim() ?: ""
+                }
+
+                // Extract ETA
+                var etaStr = ""
+                val eMatch = etaRegex.matcher(lineStr)
+                if (eMatch.find()) {
+                    val candidate = eMatch.group(1)?.trim() ?: ""
+                    if (!candidate.equals("Unknown", ignoreCase = true)) {
+                        etaStr = candidate
+                    }
+                }
+                if (etaStr.isBlank() && etaSeconds > 0) {
+                    etaStr = FormatUtils.formatEta(etaSeconds)
+                }
+
+                // Multi-stream smoothing (e.g. Video 85% + Audio 13% + Merger 2%)
+                val isSeparateStreams = formatType == MediaFormatType.VIDEO && currentStreamCount >= 2
+                val finalProgress = when {
+                    lineStr.contains("[Merger]") || lineStr.contains("[ExtractAudio]") || lineStr.contains("[Fixup") -> 99f
+                    isSeparateStreams -> {
+                        (85f + (lastParsedPercent * 0.13f)).coerceIn(85f, 98.5f)
+                    }
+                    formatType == MediaFormatType.VIDEO && !lineStr.contains(".m3u8") -> {
+                        (lastParsedPercent * 0.85f).coerceIn(0f, 85f)
+                    }
+                    else -> lastParsedPercent
+                }.coerceIn(0f, 100f)
+
+                // Human-readable status readout
+                val statusStr = when {
+                    lineStr.contains("[Merger]") -> "Merging audio & video..."
+                    lineStr.contains("[ExtractAudio]") -> "Converting to MP3..."
+                    lineStr.contains("[Fixup") -> "Finalizing media..."
+                    finalProgress >= 99f -> "Processing..."
+                    else -> {
+                        val pctStr = String.format("%.1f%%", finalProgress)
+                        if (speedStr.isNotBlank()) "$pctStr • $speedStr" else pctStr
+                    }
+                }
+
+                // Throttle UI updates to at most once every 300ms, or upon major milestones
+                if (now - lastProgressTime >= 300L || finalProgress >= 99f || (finalProgress - item.progress >= 2f)) {
                     lastProgressTime = now
-                    val lineStr = line ?: ""
-                    var speedStr = ""
-                    var sizeStr = ""
-
-                    // Extract speed and size if present in line
-                    val speedRegex = Pattern.compile("at\\s+([\\w\\.\\/\\s]+)\\s+ETA").matcher(lineStr)
-                    if (speedRegex.find()) {
-                        speedStr = speedRegex.group(1)?.trim() ?: ""
-                    }
-                    val sizeRegex = Pattern.compile("of\\s+([~\\w\\.\\s\\+]+)\\s+at").matcher(lineStr)
-                    if (sizeRegex.find()) {
-                        sizeStr = sizeRegex.group(1)?.trim() ?: ""
-                    }
-
-                    val statusStr = if (progressSafe >= 99f && (lineStr.contains("ExtractAudio") || lineStr.contains("Merger"))) {
-                        "Processing & Converting..."
-                    } else {
-                        String.format("%.1f%%", progressSafe) + if (speedStr.isNotBlank()) " • $speedStr" else ""
-                    }
-
                     item = item.copy(
-                        progress = progressSafe,
+                        status = DownloadStatus.DOWNLOADING,
+                        progress = finalProgress,
                         progressString = statusStr,
                         speed = speedStr,
-                        eta = FormatUtils.formatEta(etaSeconds),
+                        eta = etaStr,
                         filesizeFormatted = sizeStr.ifEmpty { item.filesizeFormatted }
                     )
                     updateActiveDownload(item)
@@ -540,7 +647,7 @@ class DownloadRepository(private val context: Context) {
 
             activeJobProcesses.remove(jobId)
 
-            // Locate downloaded file
+            // Locate downloaded file on disk
             val candidateFiles = dlDir.listFiles { file ->
                 file.name.startsWith(jobId) &&
                         !file.name.endsWith(".part") &&
@@ -569,7 +676,7 @@ class DownloadRepository(private val context: Context) {
             val finalFile = if (targetFile.exists()) targetFile else downloadedFile
             val finalSize = finalFile.length()
 
-            // Trigger MediaScanner so Gallery / Music players see it
+            // Trigger MediaScanner so Gallery and Players see it immediately
             FileUtils.scanMediaFile(context, finalFile)
 
             val completedItem = item.copy(
@@ -583,6 +690,7 @@ class DownloadRepository(private val context: Context) {
                 completedAt = System.currentTimeMillis()
             )
 
+            downloadConfigs.remove(jobId)
             removeActiveDownload(jobId)
             addToHistory(completedItem)
             _downloadEvents.tryEmit(completedItem)
@@ -591,12 +699,33 @@ class DownloadRepository(private val context: Context) {
             Result.success(completedItem)
         } catch (e: Exception) {
             activeJobProcesses.remove(jobId)
+
+            // Check if process termination was intentional (PAUSE)
+            if (pausedJobs.remove(jobId) || _activeDownloads.value[jobId]?.status == DownloadStatus.PAUSED) {
+                val pausedItem = (_activeDownloads.value[jobId] ?: item).copy(
+                    status = DownloadStatus.PAUSED,
+                    progressString = "Paused",
+                    speed = "",
+                    eta = ""
+                )
+                updateActiveDownload(pausedItem)
+                _downloadEvents.tryEmit(pausedItem)
+                onProgressUpdate?.invoke(pausedItem)
+                return@withContext Result.success(pausedItem)
+            }
+
+            // Check if process termination was intentional (CANCEL)
+            if (cancelledJobs.remove(jobId)) {
+                return@withContext Result.failure(Exception("Download cancelled"))
+            }
+
             Log.e("DownloadRepo", "Download failed for $jobId", e)
             val errorItem = item.copy(
                 status = DownloadStatus.ERROR,
                 errorMessage = e.message ?: "Download failed",
                 progressString = "Failed"
             )
+            downloadConfigs.remove(jobId)
             removeActiveDownload(jobId)
             addToHistory(errorItem)
             _downloadEvents.tryEmit(errorItem)
@@ -605,12 +734,62 @@ class DownloadRepository(private val context: Context) {
         }
     }
 
+    fun pauseDownload(jobId: String) {
+        pausedJobs.add(jobId)
+        val current = _activeDownloads.value[jobId]
+        if (current != null) {
+            val pausedItem = current.copy(
+                status = DownloadStatus.PAUSED,
+                progressString = "Paused",
+                speed = "",
+                eta = ""
+            )
+            updateActiveDownload(pausedItem)
+            _downloadEvents.tryEmit(pausedItem)
+        }
+        try {
+            YoutubeDL.getInstance().destroyProcessById(jobId)
+        } catch (e: Exception) {
+            Log.w("DownloadRepo", "Could not destroy process for pause $jobId", e)
+        }
+    }
+
+    suspend fun resumeDownload(
+        jobId: String,
+        onProgressUpdate: ((DownloadItem) -> Unit)? = null
+    ): Result<DownloadItem> {
+        val config = downloadConfigs[jobId]
+            ?: return Result.failure(IllegalStateException("No saved download session found for job $jobId"))
+        pausedJobs.remove(jobId)
+        cancelledJobs.remove(jobId)
+        return startDownload(
+            url = config.url,
+            title = config.title,
+            thumbnail = config.thumbnail,
+            formatType = config.formatType,
+            qualityOption = config.qualityOption,
+            audioLang = config.audioLang,
+            customJobId = jobId,
+            onProgressUpdate = onProgressUpdate
+        )
+    }
+
     fun cancelDownload(jobId: String) {
+        cancelledJobs.add(jobId)
+        pausedJobs.remove(jobId)
+        downloadConfigs.remove(jobId)
         try {
             YoutubeDL.getInstance().destroyProcessById(jobId)
         } catch (e: Exception) {
             Log.w("DownloadRepo", "Could not destroy process $jobId", e)
         }
+
+        // Clean up partial .part or .ytdl files so they do not consume disk space
+        val dlDir = FileUtils.getReclipDownloadDir(context)
+        dlDir.listFiles { file -> file.name.startsWith(jobId) }?.forEach { f ->
+            try { f.delete() } catch (ignored: Exception) {}
+        }
+
         val current = _activeDownloads.value[jobId]
         if (current != null) {
             val cancelledItem = current.copy(

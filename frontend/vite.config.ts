@@ -19,8 +19,7 @@ export default defineConfig({
   },
   base: './',
   build: {
-    outDir: '../reclip-android/app/src/main/assets/web',
+    outDir: '../android/app/src/main/assets/web',
     emptyOutDir: true,
   },
 });
-

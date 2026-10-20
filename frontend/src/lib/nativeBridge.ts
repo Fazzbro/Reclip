@@ -49,6 +49,8 @@ declare global {
     AndroidBridge?: {
       fetchInfo: (url: string) => string;
       startDownload: (requestJson: string) => string;
+      pauseDownload?: (jobId: string) => void;
+      resumeDownload?: (jobId: string) => void;
       cancelDownload: (jobId: string) => void;
       getHistory: () => string;
       deleteHistoryItem: (jobId: string, deleteFile: boolean) => void;
@@ -175,6 +177,18 @@ class NativeBridgeService {
     }, 600);
 
     return mockId;
+  }
+
+  pauseDownload(jobId: string) {
+    if (this.isAndroidApp() && window.AndroidBridge?.pauseDownload) {
+      window.AndroidBridge.pauseDownload(jobId);
+    }
+  }
+
+  resumeDownload(jobId: string) {
+    if (this.isAndroidApp() && window.AndroidBridge?.resumeDownload) {
+      window.AndroidBridge.resumeDownload(jobId);
+    }
   }
 
   cancelDownload(jobId: string) {

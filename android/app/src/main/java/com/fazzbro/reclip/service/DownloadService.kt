@@ -30,6 +30,8 @@ class DownloadService : Service() {
         private const val NOTIFICATION_ID = 4040
         const val ACTION_START_DOWNLOAD = "com.fazzbro.reclip.START_DOWNLOAD"
         const val ACTION_CANCEL_DOWNLOAD = "com.fazzbro.reclip.CANCEL_DOWNLOAD"
+        const val ACTION_PAUSE_DOWNLOAD = "com.fazzbro.reclip.PAUSE_DOWNLOAD"
+        const val ACTION_RESUME_DOWNLOAD = "com.fazzbro.reclip.RESUME_DOWNLOAD"
 
         const val EXTRA_URL = "extra_url"
         const val EXTRA_TITLE = "extra_title"
@@ -72,6 +74,26 @@ class DownloadService : Service() {
             }
         }
 
+        fun pauseDownload(context: Context, jobId: String) {
+            val intent = Intent(context, DownloadService::class.java).apply {
+                action = ACTION_PAUSE_DOWNLOAD
+                putExtra(EXTRA_JOB_ID, jobId)
+            }
+            context.startService(intent)
+        }
+
+        fun resumeDownload(context: Context, jobId: String) {
+            val intent = Intent(context, DownloadService::class.java).apply {
+                action = ACTION_RESUME_DOWNLOAD
+                putExtra(EXTRA_JOB_ID, jobId)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
         fun cancelDownload(context: Context, jobId: String) {
             val intent = Intent(context, DownloadService::class.java).apply {
                 action = ACTION_CANCEL_DOWNLOAD
@@ -83,7 +105,8 @@ class DownloadService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        repository = DownloadRepository(applicationContext)
+        // Use singleton repository so MainActivity and DownloadService share identical state and events
+        repository = DownloadRepository.getInstance(applicationContext)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -129,10 +152,43 @@ class DownloadService : Service() {
                     stopSelf()
                 }
             }
+            ACTION_PAUSE_DOWNLOAD -> {
+                val jobId = intent.getStringExtra(EXTRA_JOB_ID)
+                if (jobId != null) {
+                    repository.pauseDownload(jobId)
+                    updateNotification(
+                        title = "Download Paused",
+                        text = "Paused",
+                        progress = 0
+                    )
+                }
+            }
+            ACTION_RESUME_DOWNLOAD -> {
+                val jobId = intent.getStringExtra(EXTRA_JOB_ID)
+                if (jobId != null) {
+                    startForegroundServiceWithNotification("Resuming Download", "Resuming...", 0)
+                    serviceScope.launch {
+                        repository.resumeDownload(
+                            jobId = jobId,
+                            onProgressUpdate = { item ->
+                                updateNotification(
+                                    title = item.title,
+                                    text = "${item.progressString} • ${item.eta}",
+                                    progress = item.progress.toInt()
+                                )
+                            }
+                        )
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelf()
+                    }
+                }
+            }
             ACTION_CANCEL_DOWNLOAD -> {
                 val jobId = intent.getStringExtra(EXTRA_JOB_ID)
                 if (jobId != null) {
                     repository.cancelDownload(jobId)
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
                 }
             }
         }

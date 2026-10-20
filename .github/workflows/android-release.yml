@@ -27,15 +27,15 @@ jobs:
           cd android
           ./gradlew assembleRelease --no-daemon
 
-      - name: Upload APK to GitHub Release v1.3.2
+      - name: Upload APK to GitHub Release v1.3.3
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           APK_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
           if [ -f "$APK_PATH" ]; then
             echo "Found APK at $APK_PATH"
-            cp "$APK_PATH" ReClip_v1.0.6_Android.apk
-            gh release upload v1.3.2 ReClip_v1.0.6_Android.apk --clobber
+            cp "$APK_PATH" ReClip_v1.0.7_Android.apk
+            gh release upload v1.3.3 ReClip_v1.0.7_Android.apk --clobber
           else
             echo "Error: Release APK not found!" && exit 1
           fi

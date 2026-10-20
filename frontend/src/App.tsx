@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import {
   Download,
   Folder,
@@ -8,6 +8,7 @@ import {
   Share2,
   Trash2,
   Play,
+  Pause,
   RotateCw,
   X,
   ExternalLink,
@@ -91,6 +92,9 @@ export default function App() {
       } else if (item.status === 'ERROR') {
         setActiveDownloads((prev) => prev.filter((d) => d.id !== item.id && d.url !== item.url));
         setErrorMsg(item.progressString || 'Download encountered an error. Retrying or selecting another resolution may help.');
+      } else if (item.status === 'CANCELLED') {
+        setActiveDownloads((prev) => prev.filter((d) => d.id !== item.id && d.url !== item.url));
+        setHistoryItems(nativeBridge.getHistory());
       } else {
         setActiveDownloads((prev) => {
           const index = prev.findIndex((d) => d.id === item.id || d.url === item.url);
@@ -165,7 +169,7 @@ export default function App() {
       formatType: selectedFormat,
       qualityLabel: selectedQuality?.label || (selectedFormat === 'AUDIO' ? 'MP3 Audio' : '1080p'),
       status: 'DOWNLOADING',
-      progress: 0.5,
+      progress: 0,
       progressString: 'Starting download...',
       speed: '',
       eta: '',
@@ -318,7 +322,7 @@ export default function App() {
                         onClick={() => switchTab('cookies', 2)}
                         className="underline text-reclip-terracotta mt-1.5 block font-bold"
                       >
-                        → Configure Cookies to Bypass
+                        â†’ Configure Cookies to Bypass
                       </button>
                     )}
                   </div>
@@ -345,12 +349,32 @@ export default function App() {
                             {item.qualityLabel} • {item.formatType}
                           </p>
                         </div>
-                        <button
-                          onClick={() => nativeBridge.cancelDownload(item.id)}
-                          className="p-1 rounded-md text-paper-muted dark:text-obsidian-muted hover:text-red-500"
-                        >
-                          <X size={15} />
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          {item.status === 'PAUSED' ? (
+                            <button
+                              onClick={() => nativeBridge.resumeDownload(item.id)}
+                              className="p-1.5 rounded-lg bg-reclip-terracotta/10 text-reclip-terracotta hover:bg-reclip-terracotta hover:text-white transition-all"
+                              title="Resume Download"
+                            >
+                              <Play size={14} className="fill-current" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => nativeBridge.pauseDownload(item.id)}
+                              className="p-1.5 rounded-lg bg-paper-border dark:bg-obsidian-border text-paper-text dark:text-obsidian-text hover:bg-paper-muted/20 transition-all"
+                              title="Pause Download"
+                            >
+                              <Pause size={14} />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => nativeBridge.cancelDownload(item.id)}
+                            className="p-1.5 rounded-lg text-paper-muted dark:text-obsidian-muted hover:text-red-500 hover:bg-red-500/10 transition-all"
+                            title="Cancel Download"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
                       </div>
 
                       {/* Progress Bar */}
@@ -363,13 +387,27 @@ export default function App() {
 
                       {/* Monospace live metrics with AnimatedNumber */}
                       <div className="flex items-center justify-between mt-2 font-mono text-[11px]">
-                        <div className="flex items-center gap-1 text-reclip-terracotta font-medium">
-                          <AnimatedNumber value={item.progress} precision={1} />
-                          <span>%</span>
+                        <div className="flex items-center gap-1.5 text-reclip-terracotta font-medium">
+                          {item.status === 'PAUSED' ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold uppercase tracking-wider">
+                              PAUSED
+                            </span>
+                          ) : (
+                            <>
+                              <AnimatedNumber value={item.progress} precision={1} />
+                              <span>%</span>
+                            </>
+                          )}
                         </div>
                         <div className="text-paper-muted dark:text-obsidian-muted flex items-center gap-2">
-                          {item.speed && <span>{item.speed}</span>}
-                          {item.eta && <span>ETA {item.eta}</span>}
+                          {item.status === 'PAUSED' ? (
+                            <span>Tap play to resume</span>
+                          ) : (
+                            <>
+                              {item.speed && <span>{item.speed}</span>}
+                              {item.eta && <span>ETA {item.eta}</span>}
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>

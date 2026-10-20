@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -30,12 +32,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.fazzbro.reclip.data.model.DownloadItem
+import com.fazzbro.reclip.data.model.DownloadStatus
 import com.fazzbro.reclip.ui.theme.ReclipTerracotta
 
 @Composable
 fun DownloadProgressCard(
     item: DownloadItem,
     onCancelClick: () -> Unit,
+    onPauseClick: () -> Unit = {},
+    onResumeClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val cardShape = RoundedCornerShape(12.dp)
@@ -88,16 +93,44 @@ fun DownloadProgressCard(
                     )
                 }
 
-                IconButton(
-                    onClick = onCancelClick,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Close,
-                        contentDescription = "Cancel",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (item.status == DownloadStatus.PAUSED) {
+                        IconButton(
+                            onClick = onResumeClick,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.PlayArrow,
+                                contentDescription = "Resume",
+                                tint = ReclipTerracotta,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    } else {
+                        IconButton(
+                            onClick = onPauseClick,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Pause,
+                                contentDescription = "Pause",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    IconButton(
+                        onClick = onCancelClick,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = "Cancel",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
 
@@ -105,12 +138,12 @@ fun DownloadProgressCard(
 
             // Progress Bar
             LinearProgressIndicator(
-                progress = { item.progress / 100f },
+                progress = { (item.progress / 100f).coerceIn(0f, 1f) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(6.dp)
                     .clip(RoundedCornerShape(3.dp)),
-                color = ReclipTerracotta,
+                color = if (item.status == DownloadStatus.PAUSED) MaterialTheme.colorScheme.outline else ReclipTerracotta,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
 
@@ -123,12 +156,12 @@ fun DownloadProgressCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = item.progressString,
+                    text = if (item.status == DownloadStatus.PAUSED) "Paused • Tap play to resume" else item.progressString,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface
                 )
 
-                if (item.eta.isNotBlank()) {
+                if (item.status != DownloadStatus.PAUSED && item.eta.isNotBlank()) {
                     Text(
                         text = "ETA ${item.eta}",
                         style = MaterialTheme.typography.labelSmall,

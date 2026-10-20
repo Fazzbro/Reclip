@@ -343,6 +343,16 @@ class MainActivity : ComponentActivity() {
         }
 
         @JavascriptInterface
+        fun pauseDownload(jobId: String) {
+            DownloadService.pauseDownload(this@MainActivity, jobId)
+        }
+
+        @JavascriptInterface
+        fun resumeDownload(jobId: String) {
+            DownloadService.resumeDownload(this@MainActivity, jobId)
+        }
+
+        @JavascriptInterface
         fun cancelDownload(jobId: String) {
             DownloadService.cancelDownload(this@MainActivity, jobId)
         }

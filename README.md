@@ -24,7 +24,7 @@
 
 - **Native Android Application**: Powered by `youtubedl-android`, embedded multi-architecture FFmpeg, and an interface built with **Motion Primitives (`ibelick/motion-primitives`)**, Framer Motion, and Tailwind CSS.
 - **Native Windows Desktop Application**: Embedded Microsoft Edge WebView2 architecture with zero browser dependency and silent background operations.
-- **Real-Time Progress & Accurate Size Estimation**: Live download speed (`MB/s`), ETAs, percentage progress, and calibrated file size approximation.
+- **Real-Time Progress, Accurate Size Estimation & Pause/Resume**: Live download speed (`MB/s`), ETAs, percentage progress, calibrated file size approximation, and instant pause/resume functionality.
 - **Android System Share Sheet Integration**: Tap "Share" on any video in YouTube, Twitter/X, Instagram, TikTok, or Reddit and select **ReClip** to fetch and download instantly.
 - **Resilient Android Foreground Service**: Continuous background downloading service with notification bar progress; tasks complete uninterrupted even when the screen is locked.
 - **Automatic MediaStore Registration**: Saved media directly indexes into Android's public `Downloads/ReClip` directory, showing up immediately in VLC, Google Photos, and system players.
@@ -37,11 +37,11 @@
 ## Downloads & Installation
 
 ### Android (.apk)
-1. Download the latest **[`ReClip_v1.0.6_Android.apk`](https://github.com/Fazzbro/Reclip/releases/tag/v1.3.2)** from [GitHub Releases](https://github.com/Fazzbro/Reclip/releases/tag/v1.3.2).
+1. Download the latest **[`ReClip_v1.0.7_Android.apk`](https://github.com/Fazzbro/Reclip/releases/tag/v1.3.3)** from [GitHub Releases](https://github.com/Fazzbro/Reclip/releases/tag/v1.3.3).
 2. Install on any Android device running Android 7.0 (API 24) or newer.
 
 ```bash
-adb install ReClip_v1.0.6_Android.apk
+adb install ReClip_v1.0.7_Android.apk
 ```
 
 ### Windows Desktop (.exe)
