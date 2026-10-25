@@ -64,6 +64,40 @@ Google Chrome 127+ introduced **App-Bound Encryption**, preventing desktop appli
 
 ---
 
+---
+
+## ReClip MCP Server (Windows Edition)
+
+ReClip includes a native Model Context Protocol (MCP) server that enables AI assistants (such as Antigravity, Claude Desktop, Cursor, and other MCP clients) to download media, inspect video/audio metadata, and manage downloads on Windows.
+
+### Available MCP Tools
+- **download_media**: Downloads video or audio from YouTube, TikTok, Reddit, Instagram, Twitter/X, and 1000+ platforms directly to Windows disk with resolution, format, and multi-language dub track selection.
+- **get_media_info**: Extracts titles, video resolutions, approximate sizes, audio dub languages, and duration before downloading.
+- **get_download_status**: Monitors the progress of active background download jobs.
+- **list_downloads**: Lists recently downloaded media files from the ReClip downloads directory.
+- **get_config**: Retrieves active download directories, yt-dlp version, and cookies status.
+- **set_reclip_download_dir**: Updates the default download directory.
+- **open_downloads_folder**: Opens the ReClip downloads directory in Windows File Explorer.
+- **list_supported_sites**: Searches or lists supported platforms.
+
+### Configuration
+
+Add ReClip to your `mcp_config.json` or `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "reclip": {
+      "command": "python",
+      "args": ["c:\\Users\\NEW\\Documents\\antigravity\\gallant-newton\\mcp_server.py"],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
+```
+
 ## Building from Source
 
 ### Building Android APK
