@@ -369,7 +369,8 @@ def execute_download(
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            creationflags=CREATION_FLAGS
+            creationflags=CREATION_FLAGS,
+            env=get_clean_env()
         )
 
         output_lines = []
@@ -611,7 +612,8 @@ def get_media_info(url: str, cookies_file: str = "") -> Dict[str, Any]:
             encoding="utf-8",
             errors="replace",
             timeout=30,
-            creationflags=CREATION_FLAGS
+            creationflags=CREATION_FLAGS,
+            env=get_clean_env()
         )
 
         if res.returncode != 0:
@@ -764,7 +766,7 @@ def get_config() -> Dict[str, Any]:
     ytdlp_bin = resolve_ytdlp_bin()
     ytdlp_ver = "Unknown"
     try:
-        res = subprocess.run([ytdlp_bin, "--version"], capture_output=True, text=True, timeout=5, creationflags=CREATION_FLAGS)
+        res = subprocess.run([ytdlp_bin, "--version"], capture_output=True, text=True, timeout=5, creationflags=CREATION_FLAGS, env=get_clean_env())
         if res.returncode == 0:
             ytdlp_ver = res.stdout.strip()
     except Exception:
