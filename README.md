@@ -45,7 +45,7 @@ adb install ReClip_v1.0.8_Android.apk
 ```
 
 ### Windows Desktop (.exe)
-1. Download **`ReClip_v1.2.0_Setup.exe`** from [GitHub Releases](https://github.com/Fazzbro/Reclip/releases/tag/v1.2.0) and run the installer.
+1. Download **`ReClip_v1.2.1_Setup.exe`** from [GitHub Releases](https://github.com/Fazzbro/Reclip/releases/tag/v1.2.1) and run the installer.
 2. Alternatively, run `dist/ReClip/ReClip.exe` directly.
 
 ---
@@ -75,6 +75,7 @@ ReClip includes a native Model Context Protocol (MCP) server that enables AI ass
 - **get_media_info**: Extracts titles, video resolutions, approximate sizes, audio dub languages, and duration before downloading.
 - **get_download_status**: Monitors the progress of active background download jobs.
 - **list_downloads**: Lists recently downloaded media files from the ReClip downloads directory.
+- **update_reclip_engine**: Checks and updates the internal yt-dlp extraction engine to the latest upstream release.
 - **get_config**: Retrieves active download directories, yt-dlp version, and cookies status.
 - **set_reclip_download_dir**: Updates the default download directory.
 - **open_downloads_folder**: Opens the ReClip downloads directory in Windows File Explorer.
