@@ -94,33 +94,14 @@ def set_download_dir(path: str) -> str:
         json.dump(config, f, indent=2)
     return abs_path
 
-def resolve_ytdlp_bin() -> str:
-    # 1. Bundled bin/yt-dlp.exe
-    bundled = os.path.join(get_base_dir(), "bin", "yt-dlp.exe")
-    if os.path.exists(bundled):
-        return bundled
-    # 2. System PATH
-    import shutil
-    sys_path = shutil.which("yt-dlp.exe") or shutil.which("yt-dlp")
-    if sys_path:
-        return sys_path
-    # 3. Python script path
-    py_script = os.path.join(os.path.dirname(sys.executable), "Scripts", "yt-dlp.exe")
-    if os.path.exists(py_script):
-        return py_script
-    return "yt-dlp"
-
-def resolve_ffmpeg_dir() -> str:
-    # 1. Bundled bin/
-    bundled = os.path.join(get_base_dir(), "bin")
-    if os.path.exists(os.path.join(bundled, "ffmpeg.exe")):
-        return bundled
-    # 2. System PATH
-    import shutil
-    sys_ff = shutil.which("ffmpeg.exe") or shutil.which("ffmpeg")
-    if sys_ff:
-        return os.path.dirname(sys_ff)
-    return ""
+from app import (
+    get_ytdlp_bin as resolve_ytdlp_bin,
+    get_ffmpeg_dir as resolve_ffmpeg_dir,
+    get_node_bin,
+    get_ytdlp_version,
+    perform_engine_update,
+    build_ytdlp_base_cmd,
+)
 
 def format_size(num_bytes: Optional[float]) -> str:
     if not num_bytes:
@@ -334,20 +315,7 @@ def execute_download(
     ytdlp_bin = resolve_ytdlp_bin()
     ffmpeg_dir = resolve_ffmpeg_dir()
 
-    cmd = [
-        ytdlp_bin,
-        "-4",
-        "--newline",
-        "--no-playlist",
-        "--geo-bypass",
-        "--no-check-certificates",
-        "--socket-timeout", "20",
-        "--add-header", f"X-Forwarded-For: {get_random_ip()}",
-        "-o", out_template
-    ]
-
-    if ffmpeg_dir and os.path.exists(ffmpeg_dir):
-        cmd += ["--ffmpeg-location", ffmpeg_dir]
+    cmd = build_ytdlp_base_cmd(output_template=out_template)
 
     # Resolve Cookies
     if cookies_file and os.path.exists(cookies_file):
@@ -625,16 +593,7 @@ def get_media_info(url: str, cookies_file: str = "") -> Dict[str, Any]:
     target_url = reddit_meta["stream_url"] if reddit_meta else url
 
     ytdlp_bin = resolve_ytdlp_bin()
-    cmd = [
-        ytdlp_bin,
-        "-4",
-        "--no-playlist",
-        "--geo-bypass",
-        "--no-check-certificates",
-        "--socket-timeout", "20",
-        "--add-header", f"X-Forwarded-For: {get_random_ip()}",
-        "-j"
-    ]
+    cmd = build_ytdlp_base_cmd(is_json=True)
 
     dl_dir = get_download_dir()
     if cookies_file and os.path.exists(cookies_file):
@@ -867,6 +826,15 @@ def open_downloads_folder() -> Dict[str, Any]:
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+
+
+@mcp.tool()
+def update_reclip_engine() -> Dict[str, Any]:
+    """Check for updates and update the ReClip yt-dlp core extraction engine.
+    Ensures platform extraction algorithms are up-to-date with YouTube, TikTok, and Instagram changes.
+    """
+    res = perform_engine_update()
+    return res
 
 @mcp.tool()
 def list_supported_sites(search_query: str = "") -> Dict[str, Any]:

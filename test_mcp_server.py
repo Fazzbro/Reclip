@@ -19,6 +19,7 @@ class TestReClipMCPServer(unittest.TestCase):
             "get_config",
             "set_reclip_download_dir",
             "open_downloads_folder",
+            "update_reclip_engine",
             "list_supported_sites",
         ]
         for exp in expected:
