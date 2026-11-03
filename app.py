@@ -1101,18 +1101,18 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser="", audi
 
     if is_streamable:
         try:
-            # Build format spec for direct URL extraction
+            # Build format spec for direct URL extraction, prioritizing H.264 + AAC for universal Windows player compatibility
             if audio_lang == "all":
-                fmt_spec = f"bestvideo[height<={format_id}]+bestaudio/best[height<={format_id}]/best" if format_id and str(format_id).isdigit() else "bestvideo+bestaudio/best"
+                fmt_spec = f"bestvideo[vcodec^=avc][height<={format_id}]+bestaudio/bestvideo[height<={format_id}]+bestaudio/best[height<={format_id}]/best" if format_id and str(format_id).isdigit() else "bestvideo[vcodec^=avc]+bestaudio/bestvideo+bestaudio/best"
             elif audio_lang and audio_lang not in ("original", "default", "auto", "none", ""):
-                fmt_spec = f"bestvideo[height<={format_id}]+bestaudio[language^={audio_lang}]/bestvideo+bestaudio/best" if format_id and str(format_id).isdigit() else f"bestvideo+bestaudio[language^={audio_lang}]/bestvideo+bestaudio/best"
+                fmt_spec = f"bestvideo[vcodec^=avc][height<={format_id}]+bestaudio[language^={audio_lang}]/bestvideo[height<={format_id}]+bestaudio[language^={audio_lang}]/bestvideo+bestaudio/best" if format_id and str(format_id).isdigit() else f"bestvideo[vcodec^=avc]+bestaudio[language^={audio_lang}]/bestvideo+bestaudio[language^={audio_lang}]/best"
             else:
                 if format_id and str(format_id).isdigit():
-                    fmt_spec = f"bestvideo[height<={format_id}]+bestaudio[ext=m4a]/bestvideo[height<={format_id}]+bestaudio/best[height<={format_id}]/best"
+                    fmt_spec = f"bestvideo[vcodec^=avc][height<={format_id}]+bestaudio[ext=m4a]/bestvideo[height<={format_id}]+bestaudio[ext=m4a]/bestvideo[height<={format_id}]+bestaudio/best[height<={format_id}]/best"
                 elif format_id:
                     fmt_spec = f"{format_id}+bestaudio/best"
                 else:
-                    fmt_spec = "bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best"
+                    fmt_spec = "bestvideo[vcodec^=avc][height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best"
 
             g_cmd = [*build_ytdlp_base_cmd(), "-g", "--print", "%(title)s\t%(duration)s", "-f", fmt_spec]
             cookies_txt_path = os.path.join(dl_dir, "cookies.txt")
@@ -1158,8 +1158,8 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser="", audi
                                 "-i", stream_urls[0],
                                 "-headers", "User-Agent: Mozilla/5.0\r\n",
                                 "-i", stream_urls[1],
-                                "-c", "copy",
-                                "-bsf:a", "aac_adtstoasc",
+                                "-c:v", "copy",
+                                "-c:a", "copy",
                                 "-movflags", "frag_keyframe+empty_moov+default_base_moof",
                                 "-progress", "pipe:1",
                                 final_out
@@ -1178,7 +1178,7 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser="", audi
                         ff_proc = subprocess.Popen(
                             ff_cmd,
                             stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL,
                             text=True,
                             bufsize=1,
                             creationflags=CREATION_FLAGS,
@@ -2219,6 +2219,8 @@ def play_job(job_id):
     job = jobs.get(job_id)
     dl_dir = get_download_dir()
     target_file = None
+    has_part_file = False
+
     if job and job.get("file") and os.path.exists(job["file"]):
         target_file = job["file"]
     else:
@@ -2227,17 +2229,33 @@ def play_job(job_id):
                 os.path.join(dl_dir, f) for f in os.listdir(dl_dir)
                 if f.startswith(f"{job_id}")
             ]
-            non_part = [c for c in candidates if not c.endswith(".part") and not c.endswith(".ytdl") and not c.endswith(".temp")]
+            non_part = [
+                c for c in candidates 
+                if not any(c.lower().endswith(ext) for ext in [".part", ".ytdl", ".temp", ".fs.mp4"])
+            ]
             if non_part:
                 target_file = non_part[0]
-            elif candidates:
-                candidates.sort(key=lambda p: os.path.getsize(p) if os.path.exists(p) else 0, reverse=True)
-                target_file = candidates[0]
+            elif any(c.lower().endswith((".part", ".ytdl", ".temp")) for c in candidates):
+                has_part_file = True
         except Exception:
             pass
 
     if not target_file or not os.path.exists(target_file):
-        return jsonify({"error": "No media file found yet for this download"}), 404
+        if has_part_file:
+            return jsonify({
+                "error": "This download was started in standard mode as an incomplete (.part) file. Standard temporary files cannot be played while downloading. Enable 'Play While Downloading' before starting the download to stream."
+            }), 400
+        return jsonify({"error": "Media stream is initializing. Please wait a few seconds and try again."}), 404
+
+    # Check minimum file size to prevent player decode failure on empty or 0-byte headers
+    try:
+        sz = os.path.getsize(target_file)
+        if sz < 150 * 1024:
+            return jsonify({
+                "error": "Buffering initial media stream. Please wait 3 seconds and click Play again."
+            }), 400
+    except Exception:
+        pass
 
     try:
         if os.name == "nt":
