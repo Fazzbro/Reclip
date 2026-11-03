@@ -549,6 +549,12 @@
           <span class="switch-track"></span>
           <span id="autoUpdateLabel">Auto-Update</span>
         </label>
+        <label class="switch-container" title="Download video and audio simultaneously into playable MP4 so you can play in default player while downloading">
+          <input type="checkbox" id="streamableToggle" onchange="toggleStreamable(this.checked)" checked>
+          <span class="switch-track"></span>
+          <span id="streamableLabel">Play While Downloading</span>
+        </label>
+
         <button class="engine-update-btn" id="engineUpdateBtn" onclick="updateEngineNow()" title="Check and update yt-dlp engine now">
           <svg id="updateSpinIcon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px;"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
           <span id="engineUpdateBtnText">Check Update</span>
@@ -825,7 +831,11 @@
         actionHtml = `
           <div style="width: 100%; margin-top: 4px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              ${pauseBtn}
+              <div style="display: flex; align-items: center;">
+                ${pauseBtn}
+                <button class="card-dl-btn" style="padding: 2px 8px; font-size: 0.7rem; margin-right: 6px; background: var(--accent); color: #fff;" onclick="playJob(${idx})" title="Play in default player"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> Play</button>
+              </div>
+
               <span style="font-weight: 500; color: var(--accent); font-size: 0.68rem;">${pct}%</span>
             </div>
             <div style="width: 100%; height: 6px; background: var(--card-border); border-radius: 4px; overflow: hidden; margin-bottom: 6px;">
@@ -837,7 +847,8 @@
           </div>
         `;
       } else if (c.status === 'done') {
-        actionHtml = `<button class="card-dl-btn done" onclick="saveCard(${idx})">Save</button>
+        actionHtml = `<button class="card-dl-btn" style="padding: 2px 8px; font-size: 0.7rem; margin-right: 6px; background: var(--accent); color: #fff;" onclick="playJob(${idx})" title="Play in default player"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> Play</button>
+          <button class="card-dl-btn done" onclick="saveCard(${idx})">Save</button>
           <span class="card-status done">${esc(c.filename || '')}${currentFilesize ? ' (' + esc(currentFilesize) + ')' : ''}</span>`;
       } else if (c.status === 'error') {
         actionHtml = `<button class="card-dl-btn" onclick="dlCard(${idx})">Retry</button>
@@ -925,6 +936,37 @@
         c.status = 'error';
         c.error = err.message;
         renderCard(idx);
+      }
+    }
+
+    async function playJob(idx) {
+      const c = cardData[idx];
+      if (!c || !c.jobId) return;
+      try {
+        const res = await fetch('/api/play/' + c.jobId, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'Could not launch media player');
+        }
+      } catch (err) {
+        alert('Failed to connect to backend: ' + err.message);
+      }
+    }
+
+    async function toggleStreamable(enabled) {
+      try {
+        const res = await fetch('/api/streamable_download/toggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled })
+        });
+        const data = await res.json();
+        const toggle = document.getElementById('streamableToggle');
+        if (toggle && data.streamable_download !== undefined) {
+          toggle.checked = Boolean(data.streamable_download);
+        }
+      } catch (err) {
+        console.error('Failed to toggle streamable download:', err);
       }
     }
 
@@ -1026,6 +1068,11 @@
         
         if (toggle) {
           toggle.checked = Boolean(data.auto_update);
+        }
+
+        const streamableToggle = document.getElementById('streamableToggle');
+        if (streamableToggle && data.streamable_download !== undefined) {
+          streamableToggle.checked = Boolean(data.streamable_download);
         }
         
         if (data.is_updating) {

@@ -45,7 +45,7 @@ adb install ReClip_v1.0.8_Android.apk
 ```
 
 ### Windows Desktop (.exe)
-1. Download **`ReClip_v1.2.1_Setup.exe`** from [GitHub Releases](https://github.com/Fazzbro/Reclip/releases/tag/v1.2.1) and run the installer.
+1. Download **`ReClip_v1.2.2_Setup.exe`** from [GitHub Releases](https://github.com/Fazzbro/Reclip/releases/tag/v1.2.2) and run the installer.
 2. Alternatively, run `dist/ReClip/ReClip.exe` directly.
 
 ---

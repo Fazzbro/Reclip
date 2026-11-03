@@ -107,6 +107,7 @@ def get_config():
         "download_dir": get_default_download_dir(),
 
         "auto_update_engine": True,
+        "streamable_download": True,
 
         "last_engine_check": 0
 
@@ -307,6 +308,16 @@ def get_ffmpeg_dir():
     return ""
 
 
+
+def get_ffmpeg_bin():
+    d = get_ffmpeg_dir()
+    if d:
+        p = os.path.join(d, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+        if os.path.isfile(p):
+            return p
+    return shutil.which("ffmpeg.exe") or shutil.which("ffmpeg") or "ffmpeg"
+
+FFMPEG_BIN = get_ffmpeg_bin()
 
 def sanitize_system_path():
     """
@@ -1084,6 +1095,150 @@ def run_download(job_id, url, format_choice, format_id, cookies_browser="", audi
         else:
 
             cmd += ["-f", "bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mp4"]
+    # Check if streamable simultaneous download should be used
+    config = get_config()
+    is_streamable = config.get("streamable_download", True) and format_choice != "audio"
+
+    if is_streamable:
+        try:
+            # Build format spec for direct URL extraction
+            if audio_lang == "all":
+                fmt_spec = f"bestvideo[height<={format_id}]+bestaudio/best[height<={format_id}]/best" if format_id and str(format_id).isdigit() else "bestvideo+bestaudio/best"
+            elif audio_lang and audio_lang not in ("original", "default", "auto", "none", ""):
+                fmt_spec = f"bestvideo[height<={format_id}]+bestaudio[language^={audio_lang}]/bestvideo+bestaudio/best" if format_id and str(format_id).isdigit() else f"bestvideo+bestaudio[language^={audio_lang}]/bestvideo+bestaudio/best"
+            else:
+                if format_id and str(format_id).isdigit():
+                    fmt_spec = f"bestvideo[height<={format_id}]+bestaudio[ext=m4a]/bestvideo[height<={format_id}]+bestaudio/best[height<={format_id}]/best"
+                elif format_id:
+                    fmt_spec = f"{format_id}+bestaudio/best"
+                else:
+                    fmt_spec = "bestvideo[height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best"
+
+            g_cmd = [*build_ytdlp_base_cmd(), "-g", "--print", "%(title)s\t%(duration)s", "-f", fmt_spec]
+            cookies_txt_path = os.path.join(dl_dir, "cookies.txt")
+            if os.path.exists(cookies_txt_path):
+                g_cmd += ["--cookies", cookies_txt_path]
+            elif cookies_browser:
+                g_cmd += ["--cookies-from-browser", cookies_browser]
+            g_cmd.append(url)
+
+            g_res = subprocess.run(
+                g_cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                creationflags=CREATION_FLAGS,
+                env=get_clean_env()
+            )
+
+            if g_res.returncode == 0:
+                raw_lines = [l.strip() for l in g_res.stdout.strip().split("\n") if l.strip()]
+                if raw_lines:
+                    meta_parts = raw_lines[0].split("\t")
+                    vid_title = meta_parts[0] if len(meta_parts) > 0 and meta_parts[0] else job.get("title") or "video"
+                    try:
+                        total_dur = float(meta_parts[1]) if len(meta_parts) > 1 and meta_parts[1] else 0.0
+                    except (ValueError, TypeError):
+                        total_dur = 0.0
+                    stream_urls = raw_lines[1:]
+
+                    if stream_urls:
+                        safe_title = re.sub(r'[\\/*?:\"<>|]', '', vid_title).strip() or "video"
+                        safe_title = safe_title[:100]
+                        final_out = os.path.join(dl_dir, f"{job_id}___{safe_title}.mp4")
+                        job["file"] = final_out
+                        job["filename"] = os.path.basename(final_out)
+                        job["title"] = vid_title
+
+                        ffmpeg_bin = get_ffmpeg_bin()
+                        ff_cmd = [ffmpeg_bin, "-y", "-loglevel", "error"]
+                        if len(stream_urls) >= 2:
+                            ff_cmd += [
+                                "-headers", "User-Agent: Mozilla/5.0\r\n",
+                                "-i", stream_urls[0],
+                                "-headers", "User-Agent: Mozilla/5.0\r\n",
+                                "-i", stream_urls[1],
+                                "-c", "copy",
+                                "-bsf:a", "aac_adtstoasc",
+                                "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+                                "-progress", "pipe:1",
+                                final_out
+                            ]
+                        else:
+                            ff_cmd += [
+                                "-headers", "User-Agent: Mozilla/5.0\r\n",
+                                "-i", stream_urls[0],
+                                "-c", "copy",
+                                "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+                                "-progress", "pipe:1",
+                                final_out
+                            ]
+
+                        import psutil
+                        ff_proc = subprocess.Popen(
+                            ff_cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            bufsize=1,
+                            creationflags=CREATION_FLAGS,
+                            env=get_clean_env()
+                        )
+                        job["process"] = ff_proc
+
+                        for line in iter(ff_proc.stdout.readline, ''):
+                            line = line.strip()
+                            if not line:
+                                continue
+                            if line.startswith("out_time_us="):
+                                try:
+                                    us = int(line.split("=")[1])
+                                    sec = us / 1_000_000.0
+                                    if total_dur > 0:
+                                        pct = min(99.0, (sec / total_dur) * 100.0)
+                                        job["percent"] = round(pct, 1)
+                                except Exception:
+                                    pass
+                            elif line.startswith("total_size="):
+                                try:
+                                    sz = int(line.split("=")[1])
+                                    if sz > 0:
+                                        mb = sz / (1024 * 1024)
+                                        job["filesize"] = f"{mb:.1f}MB"
+                                except Exception:
+                                    pass
+                            elif line.startswith("speed="):
+                                spd = line.split("=")[1].strip()
+                                pct = job.get("percent", 0.0)
+                                sz = job.get("filesize", "")
+                                job["progress_str"] = f"{pct:.1f}% ({spd})" + (f" of {sz}" if sz else "")
+
+                        ff_proc.stdout.close()
+                        ff_rc = ff_proc.wait(timeout=600)
+                        if ff_rc == 0 and os.path.exists(final_out) and os.path.getsize(final_out) > 0:
+                            # 0.5-second faststart remux
+                            try:
+                                fs_tmp = final_out + ".fs.mp4"
+                                fs_res = subprocess.run(
+                                    [ffmpeg_bin, "-y", "-i", final_out, "-c", "copy", "-movflags", "+faststart", fs_tmp],
+                                    capture_output=True,
+                                    timeout=30,
+                                    creationflags=CREATION_FLAGS,
+                                    env=get_clean_env()
+                                )
+                                if fs_res.returncode == 0 and os.path.exists(fs_tmp) and os.path.getsize(fs_tmp) > 0:
+                                    os.replace(fs_tmp, final_out)
+                            except Exception:
+                                pass
+                            job["status"] = "done"
+                            job["percent"] = 100.0
+                            job["progress_str"] = "100%"
+                            return
+        except Exception as e:
+            # Fall back to standard yt-dlp pipeline
+            pass
+
+
 
 
 
@@ -2046,6 +2201,55 @@ def open_downloads():
 
 
 
+@app.route("/api/streamable_download/toggle", methods=["POST"])
+def toggle_streamable_download():
+    data = request.json or {}
+    val = data.get("enabled")
+    config = get_config()
+    if val is None:
+        config["streamable_download"] = not config.get("streamable_download", True)
+    else:
+        config["streamable_download"] = bool(val)
+    save_config(config)
+    return jsonify({"streamable_download": config["streamable_download"]})
+
+
+@app.route("/api/play/<job_id>", methods=["POST"])
+def play_job(job_id):
+    job = jobs.get(job_id)
+    dl_dir = get_download_dir()
+    target_file = None
+    if job and job.get("file") and os.path.exists(job["file"]):
+        target_file = job["file"]
+    else:
+        try:
+            candidates = [
+                os.path.join(dl_dir, f) for f in os.listdir(dl_dir)
+                if f.startswith(f"{job_id}")
+            ]
+            non_part = [c for c in candidates if not c.endswith(".part") and not c.endswith(".ytdl") and not c.endswith(".temp")]
+            if non_part:
+                target_file = non_part[0]
+            elif candidates:
+                candidates.sort(key=lambda p: os.path.getsize(p) if os.path.exists(p) else 0, reverse=True)
+                target_file = candidates[0]
+        except Exception:
+            pass
+
+    if not target_file or not os.path.exists(target_file):
+        return jsonify({"error": "No media file found yet for this download"}), 404
+
+    try:
+        if os.name == "nt":
+            os.startfile(target_file)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", target_file], env=get_clean_env())
+        else:
+            subprocess.Popen(["xdg-open", target_file], env=get_clean_env())
+        return jsonify({"success": True, "file": target_file})
+    except Exception as e:
+        return jsonify({"error": f"Failed to launch media player: {str(e)}"}), 500
+
 @app.route("/api/engine/status", methods=["GET"])
 
 def engine_status():
@@ -2057,6 +2261,7 @@ def engine_status():
         "version": get_ytdlp_version(),
 
         "auto_update": config.get("auto_update_engine", True),
+        "streamable_download": config.get("streamable_download", True),
 
         "is_updating": is_engine_updating,
 

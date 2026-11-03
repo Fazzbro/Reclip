@@ -101,6 +101,7 @@ from app import (
     get_ytdlp_version,
     perform_engine_update,
     build_ytdlp_base_cmd,
+    get_clean_env,
 )
 
 def format_size(num_bytes: Optional[float]) -> str:
