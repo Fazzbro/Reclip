@@ -81,6 +81,12 @@ class DownloadRepository(private val context: Context) {
         loadHistory()
     }
 
+    fun isStreamableDownloadEnabled(): Boolean = prefs.getBoolean("streamable_download", true)
+
+    fun setStreamableDownloadEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("streamable_download", enabled).apply()
+    }
+
     fun normalizeUrl(rawUrl: String): String {
         val url = rawUrl.trim()
 
@@ -496,6 +502,10 @@ class DownloadRepository(private val context: Context) {
                 request.addOption("--cookies", cookiePath)
             }
 
+            if (isStreamableDownloadEnabled() && formatType == MediaFormatType.VIDEO) {
+                request.addOption("--no-part")
+            }
+
             if (formatType == MediaFormatType.AUDIO) {
                 if (audioLang.isNotBlank() && audioLang != "default") {
                     request.addOption("-f", "bestaudio[language^=$audioLang][ext=m4a]/bestaudio[language^=$audioLang]/bestaudio")
@@ -655,7 +665,7 @@ class DownloadRepository(private val context: Context) {
                         !file.name.endsWith(".temp")
             } ?: emptyArray()
 
-            val downloadedFile = candidateFiles.firstOrNull()
+            val downloadedFile = candidateFiles.maxByOrNull { it.length() }
                 ?: throw IllegalStateException("Download finished but media file could not be located on storage")
 
             val fileExt = downloadedFile.extension.ifBlank { ext }

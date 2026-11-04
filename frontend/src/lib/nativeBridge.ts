@@ -57,6 +57,9 @@ declare global {
       getHistory: () => string;
       deleteHistoryItem: (jobId: string, deleteFile: boolean) => void;
       clearHistory: () => void;
+      playJob?: (jobId: string) => string;
+      isStreamableDownload?: () => boolean;
+      setStreamableDownload?: (enabled: boolean) => void;
       playMedia: (filePath: string) => void;
       shareMedia: (filePath: string) => void;
       openFolder: () => void;
@@ -279,6 +282,34 @@ class NativeBridgeService {
       window.AndroidBridge.playMedia(filePath);
     } else {
       alert(`Playing media: ${filePath}`);
+    }
+  }
+
+  playJob(jobId: string): string {
+    if (this.isAndroidApp() && window.AndroidBridge?.playJob) {
+      return window.AndroidBridge.playJob(jobId);
+    }
+    alert(`Play while downloading: ${jobId}`);
+    return 'OK';
+  }
+
+  isStreamableDownload(): boolean {
+    if (this.isAndroidApp() && window.AndroidBridge?.isStreamableDownload) {
+      return window.AndroidBridge.isStreamableDownload();
+    }
+    if (typeof localStorage !== 'undefined') {
+      const v = localStorage.getItem('reclip_streamable_download');
+      return v !== null ? v === 'true' : true;
+    }
+    return true;
+  }
+
+  setStreamableDownload(enabled: boolean) {
+    if (this.isAndroidApp() && window.AndroidBridge?.setStreamableDownload) {
+      window.AndroidBridge.setStreamableDownload(enabled);
+    }
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('reclip_streamable_download', String(enabled));
     }
   }
 

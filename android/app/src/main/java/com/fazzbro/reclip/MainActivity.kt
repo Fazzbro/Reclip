@@ -407,6 +407,91 @@ class MainActivity : ComponentActivity() {
         }
 
         @JavascriptInterface
+        fun playJob(jobId: String): String {
+            try {
+                // 1. Check completed history first
+                val historyItem = repository.downloadHistory.value.firstOrNull { it.id == jobId }
+                if (historyItem != null && historyItem.filePath.isNotBlank()) {
+                    val file = File(historyItem.filePath)
+                    if (file.exists()) {
+                        playMedia(file.absolutePath)
+                        return "OK"
+                    }
+                }
+
+                // 2. Search active download directory for candidate files starting with jobId
+                val dlDir = FileUtils.getReclipDownloadDir(this@MainActivity)
+                val candidates = dlDir.listFiles { file ->
+                    file.name.startsWith(jobId)
+                } ?: emptyArray()
+
+                val playableFiles = candidates.filter { f ->
+                    val name = f.name.lowercase()
+                    !name.endsWith(".part") && !name.endsWith(".ytdl") && !name.endsWith(".temp") && !name.endsWith(".fs.mp4")
+                }
+                val hasPartFile = candidates.any { f ->
+                    val name = f.name.lowercase()
+                    name.endsWith(".part") || name.endsWith(".ytdl") || name.endsWith(".temp")
+                }
+
+                if (playableFiles.isNotEmpty()) {
+                    val targetFile = playableFiles.maxByOrNull { it.length() }!!
+                    if (targetFile.length() < 150 * 1024) {
+                        runOnUiThread {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Buffering initial media stream. Please wait 3 seconds and click Play again.",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        return "Buffering"
+                    }
+
+                    val uri = FileUtils.getContentUriForFile(this@MainActivity, targetFile)
+                    val mime = FileUtils.getMimeType(targetFile.name)
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, mime)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivity(Intent.createChooser(intent, "Play Media"))
+                    return "OK"
+                }
+
+                runOnUiThread {
+                    if (hasPartFile) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "This download is saving in standard mode as an incomplete (.part) file. Standard temporary files cannot be played while downloading.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } else {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Media stream is initializing. Please wait a few seconds and try again.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+                return if (hasPartFile) "Incomplete part file" else "Initializing"
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "Could not open media player: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+                return "Error: ${e.message}"
+            }
+        }
+
+        @JavascriptInterface
+        fun isStreamableDownload(): Boolean = try { repository.isStreamableDownloadEnabled() } catch (e: Exception) { true }
+
+        @JavascriptInterface
+        fun setStreamableDownload(enabled: Boolean) {
+            try {
+                repository.setStreamableDownloadEnabled(enabled)
+            } catch (_: Exception) {}
+        }
+
+        @JavascriptInterface
         fun playMedia(filePath: String) {
             try {
                 val file = File(filePath)
