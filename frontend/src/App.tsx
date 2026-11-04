@@ -204,6 +204,12 @@ export default function App() {
 
         setHistoryItems(nativeBridge.getHistory());
 
+      } else if (item.status === 'PAUSED') {
+
+        setActiveDownloads((prev) =>
+          prev.map((d) => (d.id === item.id || d.url === item.url ? { ...d, status: 'PAUSED', progressString: 'Paused', speed: '', eta: '' } : d))
+        );
+
       } else {
 
         setActiveDownloads((prev) => {
@@ -387,6 +393,52 @@ export default function App() {
       jobId
 
     );
+
+  };
+
+
+
+  const handleCancelDownload = (id: string) => {
+
+    setActiveDownloads((prev) => prev.filter((d) => d.id !== id));
+
+    nativeBridge.cancelDownload(id);
+
+  };
+
+
+
+  const handlePauseDownload = (id: string) => {
+
+    setActiveDownloads((prev) =>
+
+      prev.map((d) =>
+
+        d.id === id ? { ...d, status: 'PAUSED', progressString: 'Paused', speed: '', eta: '' } : d
+
+      )
+
+    );
+
+    nativeBridge.pauseDownload(id);
+
+  };
+
+
+
+  const handleResumeDownload = (id: string) => {
+
+    setActiveDownloads((prev) =>
+
+      prev.map((d) =>
+
+        d.id === id ? { ...d, status: 'DOWNLOADING', progressString: 'Resuming...' } : d
+
+      )
+
+    );
+
+    nativeBridge.resumeDownload(id);
 
   };
 
@@ -732,7 +784,7 @@ export default function App() {
 
                             <button
 
-                              onClick={() => nativeBridge.resumeDownload(item.id)}
+                              onClick={() => handleResumeDownload(item.id)}
 
                               className="p-1.5 rounded-lg bg-reclip-terracotta/10 text-reclip-terracotta hover:bg-reclip-terracotta hover:text-white transition-all"
 
@@ -748,7 +800,7 @@ export default function App() {
 
                             <button
 
-                              onClick={() => nativeBridge.pauseDownload(item.id)}
+                              onClick={() => handlePauseDownload(item.id)}
 
                               className="p-1.5 rounded-lg bg-paper-border dark:bg-obsidian-border text-paper-text dark:text-obsidian-text hover:bg-paper-muted/20 transition-all"
 
@@ -764,7 +816,7 @@ export default function App() {
 
                           <button
 
-                            onClick={() => nativeBridge.cancelDownload(item.id)}
+                            onClick={() => handleCancelDownload(item.id)}
 
                             className="p-1.5 rounded-lg text-paper-muted dark:text-obsidian-muted hover:text-red-500 hover:bg-red-500/10 transition-all"
 

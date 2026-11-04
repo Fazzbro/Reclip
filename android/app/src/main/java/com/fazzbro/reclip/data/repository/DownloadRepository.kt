@@ -44,6 +44,14 @@ data class DownloadConfig(
     val audioLang: String
 )
 
+data class CachedStreamMeta(
+    val title: String,
+    val duration: Double,
+    val videoUrlsByHeight: Map<Int, String>,
+    val defaultVideoUrl: String?,
+    val audioUrl: String?
+)
+
 class DownloadRepository(private val context: Context) {
 
     companion object {
@@ -75,6 +83,7 @@ class DownloadRepository(private val context: Context) {
 
     private val activeJobProcesses = ConcurrentHashMap<String, String>()
     private val activeStreamableProcesses = ConcurrentHashMap<String, Process>()
+    private val streamMetaCache = ConcurrentHashMap<String, CachedStreamMeta>()
     private val downloadConfigs = ConcurrentHashMap<String, DownloadConfig>()
     private val pausedJobs = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
     private val cancelledJobs = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
@@ -411,6 +420,42 @@ class DownloadRepository(private val context: Context) {
                 audioFilesizeFormatted = if (bestAudioSize > 0L) FormatUtils.formatBytes(bestAudioSize) else ""
             )
 
+            // Cache direct stream URLs to eliminate duplicate extraction delay
+            val videoUrlsByHeight = mutableMapOf<Int, String>()
+            for ((h, f) in bestByHeight) {
+                val u = f.optString("url", "")
+                if (u.isNotBlank()) {
+                    videoUrlsByHeight[h] = u
+                }
+            }
+            var bestAudioUrl: String? = null
+            for (i in 0 until formatsArray.length()) {
+                val f = formatsArray.optJSONObject(i) ?: continue
+                val vcodec = f.optString("vcodec", "")
+                val acodec = f.optString("acodec", "")
+                val isAudio = (vcodec == "none" || vcodec.isEmpty()) && (acodec != "none" && acodec.isNotEmpty())
+                if (isAudio) {
+                    val u = f.optString("url", "")
+                    val fid = f.optString("format_id", "")
+                    val ext = f.optString("ext", "").lowercase()
+                    if (u.isNotBlank()) {
+                        if (fid.contains("140") || ext == "m4a" || bestAudioUrl == null) {
+                            bestAudioUrl = u
+                        }
+                    }
+                }
+            }
+            val rootUrl = jsonRoot.optString("url", "")
+            val cachedMeta = CachedStreamMeta(
+                title = title,
+                duration = duration.toDouble(),
+                videoUrlsByHeight = videoUrlsByHeight,
+                defaultVideoUrl = if (rootUrl.isNotBlank()) rootUrl else videoUrlsByHeight.values.firstOrNull(),
+                audioUrl = bestAudioUrl
+            )
+            streamMetaCache[url] = cachedMeta
+            streamMetaCache[rawUrl] = cachedMeta
+
             Result.success(mediaInfo)
         } catch (e: Exception) {
             Log.e("DownloadRepo", "Error fetching info", e)
@@ -488,6 +533,17 @@ class DownloadRepository(private val context: Context) {
         updateActiveDownload(item)
         onProgressUpdate?.invoke(item)
 
+        if (cancelledJobs.contains(jobId)) {
+            removeActiveDownload(jobId)
+            return@withContext Result.failure(Exception("Download cancelled"))
+        }
+        if (pausedJobs.contains(jobId)) {
+            val paused = item.copy(status = DownloadStatus.PAUSED, progressString = "Paused")
+            updateActiveDownload(paused)
+            _downloadEvents.tryEmit(paused)
+            return@withContext Result.success(paused)
+        }
+
         // Simultaneous video and audio streaming for live playback with sound
         if (isStreamableDownloadEnabled() && formatType == MediaFormatType.VIDEO) {
             val streamableRes = runStreamableDownload(
@@ -505,6 +561,17 @@ class DownloadRepository(private val context: Context) {
             if (streamableRes != null) {
                 return@withContext Result.success(streamableRes)
             }
+        }
+
+        if (cancelledJobs.contains(jobId)) {
+            removeActiveDownload(jobId)
+            return@withContext Result.failure(Exception("Download cancelled"))
+        }
+        if (pausedJobs.contains(jobId)) {
+            val paused = item.copy(status = DownloadStatus.PAUSED, progressString = "Paused")
+            updateActiveDownload(paused)
+            _downloadEvents.tryEmit(paused)
+            return@withContext Result.success(paused)
         }
 
         try {
@@ -800,40 +867,81 @@ class DownloadRepository(private val context: Context) {
         initialItem: DownloadItem,
         onProgressUpdate: ((DownloadItem) -> Unit)?
     ): DownloadItem? = withContext(Dispatchers.IO) {
+        if (cancelledJobs.contains(jobId) || pausedJobs.contains(jobId)) {
+            return@withContext null
+        }
+
         try {
             val height = qualityOption?.height ?: 1080
-            val fmtSpec = when {
-                audioLang == "all" ->
-                    "bestvideo[vcodec^=avc][height<=$height]+bestaudio/bestvideo[height<=$height]+bestaudio/best[height<=$height]/best"
-                audioLang.isNotBlank() && audioLang != "default" ->
-                    "bestvideo[vcodec^=avc][height<=$height]+bestaudio[language^=$audioLang]/bestvideo[height<=$height]+bestaudio[language^=$audioLang]/bestvideo+bestaudio/best"
-                else ->
-                    "bestvideo[vcodec^=avc][height<=$height]+bestaudio[ext=m4a]/bestvideo[height<=$height]+bestaudio[ext=m4a]/bestvideo[height<=$height]+bestaudio/best"
+            val cached = streamMetaCache[url]
+            var streamUrls: List<String> = emptyList()
+            var totalDur = 0.0
+
+            if (cached != null) {
+                totalDur = cached.duration
+                val vUrl = cached.videoUrlsByHeight[height]
+                    ?: cached.videoUrlsByHeight.values.firstOrNull()
+                    ?: cached.defaultVideoUrl
+                val aUrl = cached.audioUrl
+                if (vUrl != null && aUrl != null) {
+                    streamUrls = listOf(vUrl, aUrl)
+                } else if (vUrl != null) {
+                    streamUrls = listOf(vUrl)
+                }
             }
 
-            // 1. Extract direct stream URLs using yt-dlp -g
-            val gRequest = YoutubeDLRequest(url)
-            gRequest.addOption("-g")
-            gRequest.addOption("--print", "%(title)s\t%(duration)s")
-            gRequest.addOption("-f", fmtSpec)
-            gRequest.addOption("--geo-bypass")
-            gRequest.addOption("--no-check-certificates")
-            gRequest.addOption("--socket-timeout", "20")
+            // 1. Fallback to direct URL extraction only if not found in stream cache
+            if (streamUrls.isEmpty()) {
+                val fmtSpec = when {
+                    audioLang == "all" ->
+                        "bestvideo[vcodec^=avc][height<=$height]+bestaudio/bestvideo[height<=$height]+bestaudio/best[height<=$height]/best"
+                    audioLang.isNotBlank() && audioLang != "default" ->
+                        "bestvideo[vcodec^=avc][height<=$height]+bestaudio[language^=$audioLang]/bestvideo[height<=$height]+bestaudio[language^=$audioLang]/bestvideo+bestaudio/best"
+                    else ->
+                        "bestvideo[vcodec^=avc][height<=$height]+bestaudio[ext=m4a]/bestvideo[height<=$height]+bestaudio[ext=m4a]/bestvideo[height<=$height]+bestaudio/best"
+                }
 
-            val cookiePath = cookieManager.getCookiePath()
-            if (cookiePath != null) {
-                gRequest.addOption("--cookies", cookiePath)
+                val gRequest = YoutubeDLRequest(url)
+                gRequest.addOption("-g")
+                gRequest.addOption("--print", "%(title)s\t%(duration)s")
+                gRequest.addOption("-f", fmtSpec)
+                gRequest.addOption("--geo-bypass")
+                gRequest.addOption("--no-check-certificates")
+                gRequest.addOption("--socket-timeout", "20")
+
+                val cookiePath = cookieManager.getCookiePath()
+                if (cookiePath != null) {
+                    gRequest.addOption("--cookies", cookiePath)
+                }
+
+                if (cancelledJobs.contains(jobId) || pausedJobs.contains(jobId)) {
+                    return@withContext null
+                }
+
+                activeJobProcesses[jobId] = jobId
+                val gRes = try {
+                    YoutubeDL.getInstance().execute(gRequest, jobId)
+                } finally {
+                    activeJobProcesses.remove(jobId)
+                }
+
+                if (cancelledJobs.contains(jobId) || pausedJobs.contains(jobId)) {
+                    return@withContext null
+                }
+
+                val stdout = gRes.out ?: return@withContext null
+                val rawLines = stdout.lines().map { it.trim() }.filter { it.isNotEmpty() }
+                if (rawLines.isEmpty()) return@withContext null
+
+                val metaParts = rawLines[0].split("\t")
+                totalDur = if (metaParts.size > 1) metaParts[1].toDoubleOrNull() ?: 0.0 else 0.0
+                streamUrls = if (rawLines.size > 1) rawLines.subList(1, rawLines.size) else emptyList()
             }
 
-            val gRes = YoutubeDL.getInstance().execute(gRequest)
-            val stdout = gRes.out ?: return@withContext null
-            val rawLines = stdout.lines().map { it.trim() }.filter { it.isNotEmpty() }
-            if (rawLines.isEmpty()) return@withContext null
-
-            val metaParts = rawLines[0].split("\t")
-            val totalDur = if (metaParts.size > 1) metaParts[1].toDoubleOrNull() ?: 0.0 else 0.0
-            val streamUrls = if (rawLines.size > 1) rawLines.subList(1, rawLines.size) else emptyList()
             if (streamUrls.isEmpty()) return@withContext null
+            if (cancelledJobs.contains(jobId) || pausedJobs.contains(jobId)) {
+                return@withContext null
+            }
 
             val ffmpegBin = File(context.applicationInfo.nativeLibraryDir, "libffmpeg.so")
             if (!ffmpegBin.exists()) return@withContext null

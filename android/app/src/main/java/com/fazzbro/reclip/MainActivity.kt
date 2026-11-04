@@ -355,6 +355,7 @@ class MainActivity : ComponentActivity() {
 
         @JavascriptInterface
         fun pauseDownload(jobId: String) {
+            repository.pauseDownload(jobId)
             DownloadService.pauseDownload(this@MainActivity, jobId)
         }
 
@@ -365,6 +366,7 @@ class MainActivity : ComponentActivity() {
 
         @JavascriptInterface
         fun cancelDownload(jobId: String) {
+            repository.cancelDownload(jobId)
             DownloadService.cancelDownload(this@MainActivity, jobId)
         }
 
