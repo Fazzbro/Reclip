@@ -43,6 +43,17 @@ object FormatUtils {
         }
     }
 
+    fun parseDurationToSeconds(durationStr: String): Double {
+        if (durationStr.isBlank()) return 0.0
+        val parts = durationStr.split(":").map { it.trim().toDoubleOrNull() ?: 0.0 }
+        return when (parts.size) {
+            3 -> parts[0] * 3600.0 + parts[1] * 60.0 + parts[2]
+            2 -> parts[0] * 60.0 + parts[1]
+            1 -> parts[0]
+            else -> 0.0
+        }
+    }
+
     fun sanitizeFilename(name: String): String {
         if (name.isBlank()) return "ReClip_Media"
         val clean = name.replace(Regex("[\\\\/*?:\"<>|]"), "").trim()

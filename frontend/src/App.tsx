@@ -710,7 +710,7 @@ export default function App() {
 
                       >
 
-                        â†’ Configure Cookies to Bypass
+                        Configure Cookies to Bypass
 
                       </button>
 

@@ -16,6 +16,7 @@ import com.fazzbro.reclip.util.RedditResolver
 import com.fazzbro.reclip.util.RedditMediaResult
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
+import com.fazzbro.reclip.ReClipApp
 import com.yausername.youtubedl_android.mapper.VideoInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
@@ -98,20 +99,50 @@ class DownloadRepository(private val context: Context) {
         prefs.edit().putBoolean("streamable_download", enabled).apply()
     }
 
+    private suspend fun ensureEnginesReady() {
+        if (!ReClipApp.initDeferred.isCompleted) {
+            try {
+                kotlinx.coroutines.withTimeout(15000) {
+                    ReClipApp.initDeferred.await()
+                }
+            } catch (e: Exception) {
+                Log.w("DownloadRepo", "Engine readiness check timed out or failed: ${e.message}")
+            }
+        }
+    }
+
+    private fun applyCommonOptions(request: YoutubeDLRequest) {
+        request.addOption("-4") // Force IPv4 to prevent IPv6 socket hangs on mobile / ISP networks
+        request.addOption("--geo-bypass")
+        request.addOption("--no-check-certificates")
+        request.addOption("--socket-timeout", "15")
+        request.addOption("--extractor-args", "youtube:player_client=default,web")
+        request.addOption("--remote-components", "ejs:github")
+
+        val cacheDir = File(context.cacheDir, "ytdlp-cache")
+        if (!cacheDir.exists()) cacheDir.mkdirs()
+        request.addOption("--cache-dir", cacheDir.absolutePath)
+
+        val cookiePath = cookieManager.getCookiePath()
+        if (cookiePath != null) {
+            request.addOption("--cookies", cookiePath)
+        }
+    }
+
     fun normalizeUrl(rawUrl: String): String {
         val url = rawUrl.trim()
 
-        // YouTube short links
-        val shortMatch = Pattern.compile("youtu\\.be/([a-zA-Z0-9_-]{11})").matcher(url)
-        if (shortMatch.find()) return "https://www.youtube.com/watch?v=${shortMatch.group(1)}"
-
-        // YouTube watch
-        val watchMatch = Pattern.compile("youtube\\.com/watch\\?v=([a-zA-Z0-9_-]{11})").matcher(url)
-        if (watchMatch.find()) return "https://www.youtube.com/watch?v=${watchMatch.group(1)}"
+        // YouTube: match v parameter anywhere in query string or /v/ or embed/ or youtu.be
+        val ytParamMatch = Pattern.compile("(?:youtube\\.com/(?:[^\\s/]+/.+/|(?:v|e(?:mbed)?)/|.*[?&]v=)|youtu\\.be/)([\\w-]{11})").matcher(url)
+        if (ytParamMatch.find()) {
+            return "https://www.youtube.com/watch?v=${ytParamMatch.group(1)}"
+        }
 
         // YouTube shorts
-        val shortsMatch = Pattern.compile("youtube\\.com/shorts/([a-zA-Z0-9_-]{11})").matcher(url)
-        if (shortsMatch.find()) return "https://www.youtube.com/watch?v=${shortsMatch.group(1)}"
+        val shortsMatch = Pattern.compile("youtube\\.com/shorts/([\\w-]{11})").matcher(url)
+        if (shortsMatch.find()) {
+            return "https://www.youtube.com/watch?v=${shortsMatch.group(1)}"
+        }
 
         // Instagram: clean query parameters (e.g. ?igsh=... &utm_source=...)
         val igReelMatch = Pattern.compile("(https?://(?:www\\.)?instagram\\.com/(?:reel|reels|p|tv)/[a-zA-Z0-9_-]+)").matcher(url)
@@ -145,6 +176,7 @@ class DownloadRepository(private val context: Context) {
     }
 
     suspend fun fetchMediaInfo(rawUrl: String): Result<MediaInfo> = withContext(Dispatchers.IO) {
+        ensureEnginesReady()
         var url = normalizeUrl(rawUrl)
         if (url.isBlank()) {
             return@withContext Result.failure(IllegalArgumentException("Please enter a valid URL"))
@@ -162,14 +194,7 @@ class DownloadRepository(private val context: Context) {
             val request = YoutubeDLRequest(url)
             request.addOption("--dump-json")
             request.addOption("--no-playlist")
-            request.addOption("--geo-bypass")
-            request.addOption("--no-check-certificates")
-            request.addOption("--socket-timeout", "20")
-
-            val cookiePath = cookieManager.getCookiePath()
-            if (cookiePath != null) {
-                request.addOption("--cookies", cookiePath)
-            }
+            applyCommonOptions(request)
 
             val response = YoutubeDL.getInstance().execute(request)
             val rawOutput = response.out ?: ""
@@ -179,8 +204,21 @@ class DownloadRepository(private val context: Context) {
                 val trimmed = line.trim()
                 if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
                     try {
-                        jsonRoot = JSONObject(trimmed)
-                        break
+                        val parsed = JSONObject(trimmed)
+                        if (parsed.has("title") || parsed.has("formats") || parsed.has("id")) {
+                            jsonRoot = parsed
+                            break
+                        }
+                    } catch (ignored: Exception) {
+                    }
+                }
+            }
+            if (jsonRoot == null) {
+                val start = rawOutput.indexOf('{')
+                val end = rawOutput.lastIndexOf('}')
+                if (start != -1 && end != -1 && end > start) {
+                    try {
+                        jsonRoot = JSONObject(rawOutput.substring(start, end + 1))
                     } catch (ignored: Exception) {
                     }
                 }
@@ -188,7 +226,6 @@ class DownloadRepository(private val context: Context) {
             if (jsonRoot == null) {
                 jsonRoot = JSONObject(rawOutput)
             }
-
             val rawTitle = jsonRoot.optString("title")
             val title = if (redditMeta != null && redditMeta.title.isNotBlank()) {
                 redditMeta.title
@@ -459,16 +496,24 @@ class DownloadRepository(private val context: Context) {
             Result.success(mediaInfo)
         } catch (e: Exception) {
             Log.e("DownloadRepo", "Error fetching info", e)
-            val msg = e.message?.let {
-                if (it.contains("Sign in to confirm", ignoreCase = true) || it.contains("bot", ignoreCase = true)) {
-                    "YouTube requested bot verification. Please import a cookies.txt file in the Cookies tab to bypass."
-                } else if (it.contains("login", ignoreCase = true)) {
-                    "Login required by platform. Import cookies.txt in Settings to access this media."
-                } else {
-                    it
-                }
-            } ?: "Failed to fetch video details"
-            Result.failure(Exception(msg, e))
+            val rawMsg = e.message ?: e.cause?.message ?: ""
+            val userFriendlyMsg = when {
+                rawMsg.contains("Sign in to confirm", ignoreCase = true) || rawMsg.contains("bot", ignoreCase = true) ->
+                    "YouTube requested bot verification. Please import a cookies.txt file in Settings to bypass."
+                rawMsg.contains("login", ignoreCase = true) || rawMsg.contains("private", ignoreCase = true) ->
+                    "Media is private or requires login. Import cookies.txt in Settings to access."
+                rawMsg.contains("timed out", ignoreCase = true) || rawMsg.contains("timeout", ignoreCase = true) ->
+                    "Network connection timed out. Please check your internet connection and try again."
+                rawMsg.contains("not initialized", ignoreCase = true) ->
+                    "Media engine is initializing. Please wait a few seconds and try again."
+                rawMsg.isNotBlank() ->
+                    rawMsg.lines().firstOrNull { it.contains("ERROR:") }?.substringAfter("ERROR:")?.trim()
+                        ?: rawMsg.lines().firstOrNull { it.isNotBlank() }?.take(160)
+                        ?: rawMsg.take(160)
+                else ->
+                    "Unable to extract media from this URL. Please verify the link is public and active."
+            }
+            Result.failure(Exception(userFriendlyMsg, e))
         }
     }
 
@@ -482,6 +527,7 @@ class DownloadRepository(private val context: Context) {
         customJobId: String = "",
         onProgressUpdate: ((DownloadItem) -> Unit)? = null
     ): Result<DownloadItem> = withContext(Dispatchers.IO) {
+        ensureEnginesReady()
         var normalizedUrl = normalizeUrl(url)
         if (RedditResolver.isRedditUrl(normalizedUrl) &&
             !normalizedUrl.contains("HLSPlaylist") &&
@@ -581,14 +627,7 @@ class DownloadRepository(private val context: Context) {
             request.addOption("--newline")
             request.addOption("--continue")
             request.addOption("--no-playlist")
-            request.addOption("--geo-bypass")
-            request.addOption("--no-check-certificates")
-            request.addOption("--socket-timeout", "25")
-
-            val cookiePath = cookieManager.getCookiePath()
-            if (cookiePath != null) {
-                request.addOption("--cookies", cookiePath)
-            }
+            applyCommonOptions(request)
 
             if (isStreamableDownloadEnabled() && formatType == MediaFormatType.VIDEO) {
                 request.addOption("--no-part")
@@ -867,6 +906,7 @@ class DownloadRepository(private val context: Context) {
         initialItem: DownloadItem,
         onProgressUpdate: ((DownloadItem) -> Unit)?
     ): DownloadItem? = withContext(Dispatchers.IO) {
+        ensureEnginesReady()
         if (cancelledJobs.contains(jobId) || pausedJobs.contains(jobId)) {
             return@withContext null
         }
@@ -902,17 +942,12 @@ class DownloadRepository(private val context: Context) {
                 }
 
                 val gRequest = YoutubeDLRequest(url)
+                applyCommonOptions(gRequest)
                 gRequest.addOption("-g")
-                gRequest.addOption("--print", "%(title)s\t%(duration)s")
+                gRequest.addOption("-e")
+                gRequest.addOption("--get-duration")
                 gRequest.addOption("-f", fmtSpec)
-                gRequest.addOption("--geo-bypass")
-                gRequest.addOption("--no-check-certificates")
-                gRequest.addOption("--socket-timeout", "20")
-
-                val cookiePath = cookieManager.getCookiePath()
-                if (cookiePath != null) {
-                    gRequest.addOption("--cookies", cookiePath)
-                }
+                gRequest.addOption("--no-playlist")
 
                 if (cancelledJobs.contains(jobId) || pausedJobs.contains(jobId)) {
                     return@withContext null
@@ -933,11 +968,13 @@ class DownloadRepository(private val context: Context) {
                 val rawLines = stdout.lines().map { it.trim() }.filter { it.isNotEmpty() }
                 if (rawLines.isEmpty()) return@withContext null
 
-                val metaParts = rawLines[0].split("\t")
-                totalDur = if (metaParts.size > 1) metaParts[1].toDoubleOrNull() ?: 0.0 else 0.0
-                streamUrls = if (rawLines.size > 1) rawLines.subList(1, rawLines.size) else emptyList()
-            }
+                val extractedStreamUrls = rawLines.filter { it.startsWith("http://") || it.startsWith("https://") }
+                if (extractedStreamUrls.isEmpty()) return@withContext null
 
+                val durationLine = rawLines.lastOrNull { !it.startsWith("http") && it.contains(":") }
+                totalDur = if (durationLine != null) FormatUtils.parseDurationToSeconds(durationLine) else 0.0
+                streamUrls = extractedStreamUrls
+            }
             if (streamUrls.isEmpty()) return@withContext null
             if (cancelledJobs.contains(jobId) || pausedJobs.contains(jobId)) {
                 return@withContext null

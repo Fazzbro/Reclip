@@ -8,6 +8,7 @@ import android.util.Log
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -18,6 +19,7 @@ class ReClipApp : Application() {
         const val CHANNEL_DOWNLOADS = "reclip_downloads_channel"
         lateinit var instance: ReClipApp
             private set
+        val initDeferred = CompletableDeferred<Boolean>()
     }
 
     override fun onCreate() {
@@ -49,10 +51,13 @@ class ReClipApp : Application() {
                 Log.d("ReClipApp", "YoutubeDL initialized")
                 FFmpeg.getInstance().init(this@ReClipApp)
                 Log.d("ReClipApp", "FFmpeg initialized")
+                initDeferred.complete(true)
             } catch (e: YoutubeDLException) {
                 Log.e("ReClipApp", "Failed to initialize YoutubeDL / FFmpeg", e)
+                initDeferred.complete(false)
             } catch (e: Exception) {
                 Log.e("ReClipApp", "Error during engine initialization", e)
+                initDeferred.complete(false)
             }
         }
     }

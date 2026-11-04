@@ -235,8 +235,12 @@ class MainActivity : ComponentActivity() {
                         }
                         obj.toString()
                     } else {
+                        val ex = res.exceptionOrNull()
+                        val msg = ex?.message?.ifBlank { null }
+                            ?: ex?.cause?.message?.ifBlank { null }
+                            ?: "Failed to extract media details. Please check the URL or your network connection."
                         val err = JSONObject().apply {
-                            put("error", res.exceptionOrNull()?.message ?: "Failed to fetch media details")
+                            put("error", msg)
                         }
                         err.toString()
                     }
@@ -245,8 +249,11 @@ class MainActivity : ComponentActivity() {
                         webView.evaluateJavascript("window.onFetchInfoCallback('$callbackId', $safe);", null)
                     }
                 } catch (e: Exception) {
+                    val msg = e.message?.ifBlank { null }
+                        ?: e.cause?.message?.ifBlank { null }
+                        ?: "Failed to extract media details. Please verify the URL and try again."
                     val err = JSONObject().apply {
-                        put("error", e.message ?: "Extraction failed")
+                        put("error", msg)
                     }
                     val safe = JSONObject.quote(err.toString())
                     runOnUiThread {
@@ -299,8 +306,12 @@ class MainActivity : ComponentActivity() {
                     }
                     obj.toString()
                 } else {
+                    val ex = res.exceptionOrNull()
+                    val msg = ex?.message?.ifBlank { null }
+                        ?: ex?.cause?.message?.ifBlank { null }
+                        ?: "Failed to extract media details. Please check the URL or your network connection."
                     val err = JSONObject().apply {
-                        put("error", res.exceptionOrNull()?.message ?: "Failed to fetch media details")
+                        put("error", msg)
                     }
                     err.toString()
                 }
