@@ -419,19 +419,97 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // 2. Search active download directory for candidate files starting with jobId
+                // 2. Check active item streamable file directly
+                val activeItem = repository.activeDownloads.value[jobId]
+                if (activeItem != null && activeItem.filePath.isNotBlank()) {
+                    val activeFile = File(activeItem.filePath)
+                    if (activeFile.exists()) {
+                        if (activeFile.length() < 150 * 1024) {
+                            runOnUiThread {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Buffering initial media stream. Please wait 3 seconds and click Play again.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                            return "Buffering"
+                        }
+                        val uri = FileUtils.getContentUriForFile(this@MainActivity, activeFile)
+                        val mime = FileUtils.getMimeType(activeFile.name)
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, mime)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        startActivity(Intent.createChooser(intent, "Play Media"))
+                        return "OK"
+                    }
+                }
+
+                // 3. Search active download directory for candidate files starting with jobId
                 val dlDir = FileUtils.getReclipDownloadDir(this@MainActivity)
                 val candidates = dlDir.listFiles { file ->
                     file.name.startsWith(jobId)
                 } ?: emptyArray()
 
-                val playableFiles = candidates.filter { f ->
+                // Look for unified streamable mp4 files first
+                val unifiedFiles = candidates.filter { f ->
                     val name = f.name.lowercase()
-                    !name.endsWith(".part") && !name.endsWith(".ytdl") && !name.endsWith(".temp") && !name.endsWith(".fs.mp4")
+                    name.endsWith(".mp4") &&
+                        !name.endsWith(".part") &&
+                        !name.endsWith(".ytdl") &&
+                        !name.endsWith(".temp") &&
+                        !name.endsWith(".fs.mp4") &&
+                        !name.contains(".f1") &&
+                        !name.contains(".f2") &&
+                        !name.contains(".f3")
+                }
+
+                if (unifiedFiles.isNotEmpty()) {
+                    val targetFile = unifiedFiles.maxByOrNull { it.length() }!!
+                    if (targetFile.length() < 150 * 1024) {
+                        runOnUiThread {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Buffering initial media stream. Please wait 3 seconds and click Play again.",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        return "Buffering"
+                    }
+                    val uri = FileUtils.getContentUriForFile(this@MainActivity, targetFile)
+                    val mime = FileUtils.getMimeType(targetFile.name)
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, mime)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivity(Intent.createChooser(intent, "Play Media"))
+                    return "OK"
+                }
+
+                // Check if separate streams exist
+                val hasSeparateStreams = candidates.any { f ->
+                    val name = f.name.lowercase()
+                    name.contains(".f1") || name.contains(".f2") || name.contains(".f3") || name.endsWith(".m4a")
                 }
                 val hasPartFile = candidates.any { f ->
                     val name = f.name.lowercase()
                     name.endsWith(".part") || name.endsWith(".ytdl") || name.endsWith(".temp")
+                }
+
+                if (hasSeparateStreams) {
+                    runOnUiThread {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "This download is downloading separate video and audio streams. Audio will be merged upon completion, or enable 'Play While Downloading' in Settings to stream both together.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    return "Separate streams"
+                }
+
+                val playableFiles = candidates.filter { f ->
+                    val name = f.name.lowercase()
+                    !name.endsWith(".part") && !name.endsWith(".ytdl") && !name.endsWith(".temp") && !name.endsWith(".fs.mp4")
                 }
 
                 if (playableFiles.isNotEmpty()) {
