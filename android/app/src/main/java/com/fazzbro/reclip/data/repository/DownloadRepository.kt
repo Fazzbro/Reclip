@@ -106,6 +106,8 @@ class DownloadRepository(private val context: Context) {
         request.addOption("--geo-bypass")
         request.addOption("--no-check-certificates")
         request.addOption("--socket-timeout", "20")
+        request.addOption("--retries", "3")
+        request.addOption("--fragment-retries", "5")
 
         val cacheDir = File(context.cacheDir, "ytdlp-cache")
         if (!cacheDir.exists()) cacheDir.mkdirs()

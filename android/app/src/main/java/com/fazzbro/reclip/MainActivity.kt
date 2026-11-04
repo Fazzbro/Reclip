@@ -27,6 +27,7 @@ import com.fazzbro.reclip.data.model.FormatOption
 import com.fazzbro.reclip.data.model.MediaFormatType
 import com.fazzbro.reclip.data.repository.DownloadRepository
 import com.fazzbro.reclip.service.DownloadService
+import com.yausername.youtubedl_android.YoutubeDL
 import com.fazzbro.reclip.util.CookieManager
 import com.fazzbro.reclip.util.FileUtils
 import kotlinx.coroutines.Dispatchers
@@ -683,6 +684,15 @@ class MainActivity : ComponentActivity() {
                 } else {
                     "Update failed: ${res.exceptionOrNull()?.message}"
                 }
+            }
+        }
+
+        @JavascriptInterface
+        fun getYtDlpVersion(): String {
+            return try {
+                YoutubeDL.getInstance().versionName(this@MainActivity) ?: ReClipApp.BUNDLED_YTDLP_VERSION
+            } catch (e: Exception) {
+                ReClipApp.BUNDLED_YTDLP_VERSION
             }
         }
     }
