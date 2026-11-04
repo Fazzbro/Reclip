@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 
 import {
 
@@ -95,6 +95,8 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const [errorHeader, setErrorHeader] = useState<string>('Extraction Failed');
 
   const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null);
 
@@ -196,7 +198,9 @@ export default function App() {
 
         setActiveDownloads((prev) => prev.filter((d) => d.id !== item.id && d.url !== item.url));
 
-        setErrorMsg(item.progressString || 'Download encountered an error. Retrying or selecting another resolution may help.');
+        setErrorHeader('Download Failed');
+
+        setErrorMsg((item as any).errorMessage || item.progressString || 'Download encountered an error. Retrying or selecting another resolution may help.');
 
       } else if (item.status === 'CANCELLED') {
 
@@ -316,6 +320,8 @@ export default function App() {
 
     } catch (err: any) {
 
+      setErrorHeader('Extraction Failed');
+
       setErrorMsg(err.message || 'Failed to fetch media details');
 
     } finally {
@@ -333,6 +339,8 @@ export default function App() {
     if (!mediaInfo) return;
 
     setErrorMsg(null);
+
+    setErrorHeader('Download Failed');
 
 
 
@@ -696,7 +704,7 @@ export default function App() {
 
                   <div>
 
-                    <p className="font-semibold">Extraction Failed</p>
+                    <p className="font-semibold">{errorHeader}</p>
 
                     <p className="opacity-90 mt-0.5">{errorMsg}</p>
 

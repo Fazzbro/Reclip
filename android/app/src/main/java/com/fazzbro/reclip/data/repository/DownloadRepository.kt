@@ -45,14 +45,6 @@ data class DownloadConfig(
     val audioLang: String
 )
 
-data class CachedStreamMeta(
-    val title: String,
-    val duration: Double,
-    val videoUrlsByHeight: Map<Int, String>,
-    val defaultVideoUrl: String?,
-    val audioUrl: String?
-)
-
 class DownloadRepository(private val context: Context) {
 
     companion object {
@@ -83,8 +75,6 @@ class DownloadRepository(private val context: Context) {
     val downloadHistory: StateFlow<List<DownloadItem>> = _downloadHistory.asStateFlow()
 
     private val activeJobProcesses = ConcurrentHashMap<String, String>()
-    private val activeStreamableProcesses = ConcurrentHashMap<String, Process>()
-    private val streamMetaCache = ConcurrentHashMap<String, CachedStreamMeta>()
     private val downloadConfigs = ConcurrentHashMap<String, DownloadConfig>()
     private val pausedJobs = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
     private val cancelledJobs = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
@@ -115,9 +105,7 @@ class DownloadRepository(private val context: Context) {
         request.addOption("-4") // Force IPv4 to prevent IPv6 socket hangs on mobile / ISP networks
         request.addOption("--geo-bypass")
         request.addOption("--no-check-certificates")
-        request.addOption("--socket-timeout", "15")
-        request.addOption("--extractor-args", "youtube:player_client=default,web")
-        request.addOption("--remote-components", "ejs:github")
+        request.addOption("--socket-timeout", "20")
 
         val cacheDir = File(context.cacheDir, "ytdlp-cache")
         if (!cacheDir.exists()) cacheDir.mkdirs()
@@ -419,24 +407,28 @@ class DownloadRepository(private val context: Context) {
 
             for (i in 0 until formatsArray.length()) {
                 val f = formatsArray.optJSONObject(i) ?: continue
+                val lang = f.optString("language", "").lowercase()
+                val fid = f.optString("format_id", "")
+                val formatNote = f.optString("format_note", "").lowercase()
                 val vcodec = f.optString("vcodec", "")
-                val isAudioOnly = (vcodec == "none" || vcodec.isEmpty())
-                val rawLang = f.optString("language", "").lowercase().trim()
-                val formatNote = f.optString("format_note", "").lowercase().trim()
+                val acodec = f.optString("acodec", "")
 
-                if (isAudioOnly && rawLang.isNotEmpty()) {
-                    val baseLang = rawLang.split("-")[0]
-                    if (baseLang.isNotEmpty() && !seenLangs.contains(baseLang)) {
-                        seenLangs.add(baseLang)
-                        val name = langNames[rawLang] ?: langNames[baseLang] ?: "${baseLang.uppercase()} ($formatNote)"
-                        audioLanguages.add(AudioLanguage(code = baseLang, name = name, langId = rawLang))
-                    }
+                val isAudioTrack = (vcodec == "none" || vcodec.isEmpty()) && (acodec != "none" && acodec.isNotEmpty())
+                if (isAudioTrack && lang.isNotBlank() && !seenLangs.contains(lang)) {
+                    seenLangs.add(lang)
+                    val baseCode = lang.split("-")[0]
+                    val displayName = langNames[lang] ?: langNames[baseCode] ?: lang.replaceFirstChar { it.uppercase() }
+                    audioLanguages.add(
+                        AudioLanguage(
+                            code = lang,
+                            name = displayName,
+                            langId = fid
+                        )
+                    )
                 }
             }
 
-            val approxFilesize = if (jsonRoot.optLong("filesize", 0L) > 0L) {
-                jsonRoot.optLong("filesize")
-            } else if (jsonRoot.optLong("filesize_approx", 0L) > 0L) {
+            val approxFilesize = if (jsonRoot.has("filesize_approx") && jsonRoot.optLong("filesize_approx") > 0L) {
                 jsonRoot.optLong("filesize_approx")
             } else {
                 formatsList.firstOrNull { it.height == 1080 }?.filesize
@@ -456,42 +448,6 @@ class DownloadRepository(private val context: Context) {
                 approxFilesizeFormatted = if (approxFilesize > 0L) FormatUtils.formatBytes(approxFilesize) else "",
                 audioFilesizeFormatted = if (bestAudioSize > 0L) FormatUtils.formatBytes(bestAudioSize) else ""
             )
-
-            // Cache direct stream URLs to eliminate duplicate extraction delay
-            val videoUrlsByHeight = mutableMapOf<Int, String>()
-            for ((h, f) in bestByHeight) {
-                val u = f.optString("url", "")
-                if (u.isNotBlank()) {
-                    videoUrlsByHeight[h] = u
-                }
-            }
-            var bestAudioUrl: String? = null
-            for (i in 0 until formatsArray.length()) {
-                val f = formatsArray.optJSONObject(i) ?: continue
-                val vcodec = f.optString("vcodec", "")
-                val acodec = f.optString("acodec", "")
-                val isAudio = (vcodec == "none" || vcodec.isEmpty()) && (acodec != "none" && acodec.isNotEmpty())
-                if (isAudio) {
-                    val u = f.optString("url", "")
-                    val fid = f.optString("format_id", "")
-                    val ext = f.optString("ext", "").lowercase()
-                    if (u.isNotBlank()) {
-                        if (fid.contains("140") || ext == "m4a" || bestAudioUrl == null) {
-                            bestAudioUrl = u
-                        }
-                    }
-                }
-            }
-            val rootUrl = jsonRoot.optString("url", "")
-            val cachedMeta = CachedStreamMeta(
-                title = title,
-                duration = duration.toDouble(),
-                videoUrlsByHeight = videoUrlsByHeight,
-                defaultVideoUrl = if (rootUrl.isNotBlank()) rootUrl else videoUrlsByHeight.values.firstOrNull(),
-                audioUrl = bestAudioUrl
-            )
-            streamMetaCache[url] = cachedMeta
-            streamMetaCache[rawUrl] = cachedMeta
 
             Result.success(mediaInfo)
         } catch (e: Exception) {
@@ -561,7 +517,7 @@ class DownloadRepository(private val context: Context) {
         val existingItem = _activeDownloads.value[jobId]
         var item = existingItem?.copy(
             status = DownloadStatus.DOWNLOADING,
-            progressString = if (existingItem.progress > 0f) "Resuming download..." else "Starting download..."
+            progressString = if (existingItem.progress > 0f) "Resuming download..." else "Initializing download..."
         ) ?: DownloadItem(
             id = jobId,
             url = normalizedUrl,
@@ -573,41 +529,11 @@ class DownloadRepository(private val context: Context) {
             audioLang = audioLang,
             status = DownloadStatus.DOWNLOADING,
             progress = 0f,
-            progressString = "Starting download..."
+            progressString = "Initializing download..."
         )
 
         updateActiveDownload(item)
         onProgressUpdate?.invoke(item)
-
-        if (cancelledJobs.contains(jobId)) {
-            removeActiveDownload(jobId)
-            return@withContext Result.failure(Exception("Download cancelled"))
-        }
-        if (pausedJobs.contains(jobId)) {
-            val paused = item.copy(status = DownloadStatus.PAUSED, progressString = "Paused")
-            updateActiveDownload(paused)
-            _downloadEvents.tryEmit(paused)
-            return@withContext Result.success(paused)
-        }
-
-        // Simultaneous video and audio streaming for live playback with sound
-        if (isStreamableDownloadEnabled() && formatType == MediaFormatType.VIDEO) {
-            val streamableRes = runStreamableDownload(
-                jobId = jobId,
-                url = normalizedUrl,
-                title = title,
-                cleanTitle = cleanTitle,
-                thumbnail = thumbnail,
-                qualityOption = qualityOption,
-                audioLang = audioLang,
-                dlDir = dlDir,
-                initialItem = item,
-                onProgressUpdate = onProgressUpdate
-            )
-            if (streamableRes != null) {
-                return@withContext Result.success(streamableRes)
-            }
-        }
 
         if (cancelledJobs.contains(jobId)) {
             removeActiveDownload(jobId)
@@ -634,7 +560,7 @@ class DownloadRepository(private val context: Context) {
             }
 
             if (formatType == MediaFormatType.AUDIO) {
-                if (audioLang.isNotBlank() && audioLang != "default") {
+                if (audioLang.isNotBlank() && audioLang != "default" && audioLang != "all") {
                     request.addOption("-f", "bestaudio[language^=$audioLang][ext=m4a]/bestaudio[language^=$audioLang]/bestaudio")
                 }
                 request.addOption("-x")
@@ -675,7 +601,12 @@ class DownloadRepository(private val context: Context) {
 
             YoutubeDL.getInstance().execute(request, jobId) { progressFloat, etaSeconds, line ->
                 // Check if user paused or cancelled while running
-                if (pausedJobs.contains(jobId) || cancelledJobs.contains(jobId)) {
+                if (cancelledJobs.contains(jobId)) {
+                    try { YoutubeDL.getInstance().destroyProcessById(jobId) } catch (ignored: Exception) {}
+                    return@execute
+                }
+                if (pausedJobs.contains(jobId)) {
+                    try { YoutubeDL.getInstance().destroyProcessById(jobId) } catch (ignored: Exception) {}
                     return@execute
                 }
 
@@ -686,14 +617,14 @@ class DownloadRepository(private val context: Context) {
                     currentStreamCount++
                 }
 
-                // 1. Direct percentage extraction from stdout line (bypasses youtubedl-android regex limitation)
+                // 1. Direct percentage extraction from stdout line
                 var extractedPercent: Float? = null
                 val pMatch = percentRegex.matcher(lineStr)
                 if (pMatch.find()) {
                     extractedPercent = pMatch.group(1)?.toFloatOrNull()
                 }
 
-                // 2. Fragment ratio extraction for HLS / DASH streams (e.g. Reddit, Twitter, TikTok)
+                // 2. Fragment ratio extraction for HLS / DASH streams
                 if (extractedPercent == null) {
                     val fMatch = fragRegex.matcher(lineStr)
                     if (fMatch.find()) {
@@ -761,13 +692,13 @@ class DownloadRepository(private val context: Context) {
                     lineStr.contains("[Fixup") -> "Finalizing media..."
                     finalProgress >= 99f -> "Processing..."
                     else -> {
-                        val pctStr = String.format("%.1f%%", finalProgress)
+                        val pctStr = String.format(Locale.US, "%.1f%%", finalProgress)
                         if (speedStr.isNotBlank()) "$pctStr • $speedStr" else pctStr
                     }
                 }
 
-                // Throttle UI updates to at most once every 300ms, or upon major milestones
-                if (now - lastProgressTime >= 300L || finalProgress >= 99f || (finalProgress - item.progress >= 2f)) {
+                // Throttle UI updates to at most once every 250ms, or upon major milestones
+                if (now - lastProgressTime >= 250L || finalProgress >= 99f || (finalProgress - item.progress >= 2f)) {
                     lastProgressTime = now
                     item = item.copy(
                         status = DownloadStatus.DOWNLOADING,
@@ -853,310 +784,45 @@ class DownloadRepository(private val context: Context) {
 
             // Check if process termination was intentional (CANCEL)
             if (cancelledJobs.remove(jobId)) {
+                val dlDirFiles = dlDir.listFiles { file -> file.name.startsWith(jobId) }
+                dlDirFiles?.forEach { f -> try { f.delete() } catch (ignored: Exception) {} }
+                removeActiveDownload(jobId)
                 return@withContext Result.failure(Exception("Download cancelled"))
             }
 
             Log.e("DownloadRepo", "Download failed for $jobId", e)
+            val userMsg = when {
+                e.message?.contains("Sign in to confirm", ignoreCase = true) == true ||
+                e.message?.contains("bot", ignoreCase = true) == true ->
+                    "YouTube requested bot verification. Please import a cookies.txt file in Settings to bypass."
+                e.message?.contains("login", ignoreCase = true) == true ||
+                e.message?.contains("private", ignoreCase = true) == true ->
+                    "Media is private or requires login. Import cookies.txt in Settings to access."
+                e.message?.contains("timed out", ignoreCase = true) == true ||
+                e.message?.contains("timeout", ignoreCase = true) == true ->
+                    "Network connection timed out. Please check your internet connection and try again."
+                e.message?.contains("format is not available", ignoreCase = true) == true ->
+                    "Selected quality format is not available. Please try selecting a different resolution."
+                !e.message.isNullOrBlank() -> {
+                    val raw = e.message!!
+                    raw.lines().firstOrNull { it.contains("ERROR:") }?.substringAfter("ERROR:")?.trim()
+                        ?: raw.lines().firstOrNull { it.isNotBlank() }?.take(160)
+                        ?: raw.take(160)
+                }
+                else -> "Download encountered an error. Retrying or selecting another resolution may help."
+            }
+
             val errorItem = item.copy(
                 status = DownloadStatus.ERROR,
-                errorMessage = e.message ?: "Download failed",
-                progressString = "Failed"
+                errorMessage = userMsg,
+                progressString = userMsg
             )
             downloadConfigs.remove(jobId)
             removeActiveDownload(jobId)
             addToHistory(errorItem)
             _downloadEvents.tryEmit(errorItem)
             onProgressUpdate?.invoke(errorItem)
-            Result.failure(e)
-        }
-    }
-
-    fun pauseDownload(jobId: String) {
-        pausedJobs.add(jobId)
-        activeStreamableProcesses[jobId]?.destroyForcibly()
-        activeStreamableProcesses.remove(jobId)
-        val current = _activeDownloads.value[jobId]
-        if (current != null) {
-            val pausedItem = current.copy(
-                status = DownloadStatus.PAUSED,
-                progressString = "Paused",
-                speed = "",
-                eta = ""
-            )
-            updateActiveDownload(pausedItem)
-            _downloadEvents.tryEmit(pausedItem)
-        }
-        try {
-            YoutubeDL.getInstance().destroyProcessById(jobId)
-        } catch (e: Exception) {
-            Log.w("DownloadRepo", "Could not destroy process for pause $jobId", e)
-        }
-    }
-
-
-    private suspend fun runStreamableDownload(
-        jobId: String,
-        url: String,
-        title: String,
-        cleanTitle: String,
-        thumbnail: String,
-        qualityOption: FormatOption?,
-        audioLang: String,
-        dlDir: File,
-        initialItem: DownloadItem,
-        onProgressUpdate: ((DownloadItem) -> Unit)?
-    ): DownloadItem? = withContext(Dispatchers.IO) {
-        ensureEnginesReady()
-        if (cancelledJobs.contains(jobId) || pausedJobs.contains(jobId)) {
-            return@withContext null
-        }
-
-        try {
-            val height = qualityOption?.height ?: 1080
-            val cached = streamMetaCache[url]
-            var streamUrls: List<String> = emptyList()
-            var totalDur = 0.0
-
-            if (cached != null) {
-                totalDur = cached.duration
-                val vUrl = cached.videoUrlsByHeight[height]
-                    ?: cached.videoUrlsByHeight.values.firstOrNull()
-                    ?: cached.defaultVideoUrl
-                val aUrl = cached.audioUrl
-                if (vUrl != null && aUrl != null) {
-                    streamUrls = listOf(vUrl, aUrl)
-                } else if (vUrl != null) {
-                    streamUrls = listOf(vUrl)
-                }
-            }
-
-            // 1. Fallback to direct URL extraction only if not found in stream cache
-            if (streamUrls.isEmpty()) {
-                val fmtSpec = when {
-                    audioLang == "all" ->
-                        "bestvideo[vcodec^=avc][height<=$height]+bestaudio/bestvideo[height<=$height]+bestaudio/best[height<=$height]/best"
-                    audioLang.isNotBlank() && audioLang != "default" ->
-                        "bestvideo[vcodec^=avc][height<=$height]+bestaudio[language^=$audioLang]/bestvideo[height<=$height]+bestaudio[language^=$audioLang]/bestvideo+bestaudio/best"
-                    else ->
-                        "bestvideo[vcodec^=avc][height<=$height]+bestaudio[ext=m4a]/bestvideo[height<=$height]+bestaudio[ext=m4a]/bestvideo[height<=$height]+bestaudio/best"
-                }
-
-                val gRequest = YoutubeDLRequest(url)
-                applyCommonOptions(gRequest)
-                gRequest.addOption("-g")
-                gRequest.addOption("-e")
-                gRequest.addOption("--get-duration")
-                gRequest.addOption("-f", fmtSpec)
-                gRequest.addOption("--no-playlist")
-
-                if (cancelledJobs.contains(jobId) || pausedJobs.contains(jobId)) {
-                    return@withContext null
-                }
-
-                activeJobProcesses[jobId] = jobId
-                val gRes = try {
-                    YoutubeDL.getInstance().execute(gRequest, jobId)
-                } finally {
-                    activeJobProcesses.remove(jobId)
-                }
-
-                if (cancelledJobs.contains(jobId) || pausedJobs.contains(jobId)) {
-                    return@withContext null
-                }
-
-                val stdout = gRes.out ?: return@withContext null
-                val rawLines = stdout.lines().map { it.trim() }.filter { it.isNotEmpty() }
-                if (rawLines.isEmpty()) return@withContext null
-
-                val extractedStreamUrls = rawLines.filter { it.startsWith("http://") || it.startsWith("https://") }
-                if (extractedStreamUrls.isEmpty()) return@withContext null
-
-                val durationLine = rawLines.lastOrNull { !it.startsWith("http") && it.contains(":") }
-                totalDur = if (durationLine != null) FormatUtils.parseDurationToSeconds(durationLine) else 0.0
-                streamUrls = extractedStreamUrls
-            }
-            if (streamUrls.isEmpty()) return@withContext null
-            if (cancelledJobs.contains(jobId) || pausedJobs.contains(jobId)) {
-                return@withContext null
-            }
-
-            val ffmpegBin = File(context.applicationInfo.nativeLibraryDir, "libffmpeg.so")
-            if (!ffmpegBin.exists()) return@withContext null
-
-            val ffmpegLibDir = File(context.noBackupFilesDir, "youtubedl-android/packages/ffmpeg/usr/lib")
-            val nativeLibDir = context.applicationInfo.nativeLibraryDir
-            val ldLibraryPath = if (ffmpegLibDir.exists()) "$nativeLibDir:${ffmpegLibDir.absolutePath}" else nativeLibDir
-            val envPath = System.getenv("PATH") ?: "/system/bin:/system/xbin"
-
-            val finalOut = File(dlDir, "${jobId}___${cleanTitle}.mp4")
-            val ffCmd = mutableListOf(
-                ffmpegBin.absolutePath,
-                "-y",
-                "-loglevel", "error"
-            )
-
-            if (streamUrls.size >= 2) {
-                ffCmd.addAll(listOf(
-                    "-headers", "User-Agent: Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36\r\n",
-                    "-i", streamUrls[0],
-                    "-headers", "User-Agent: Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36\r\n",
-                    "-i", streamUrls[1],
-                    "-c:v", "copy",
-                    "-c:a", "copy",
-                    "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-                    "-progress", "pipe:1",
-                    finalOut.absolutePath
-                ))
-            } else {
-                ffCmd.addAll(listOf(
-                    "-headers", "User-Agent: Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36\r\n",
-                    "-i", streamUrls[0],
-                    "-c", "copy",
-                    "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-                    "-progress", "pipe:1",
-                    finalOut.absolutePath
-                ))
-            }
-
-            val pb = ProcessBuilder(ffCmd)
-            pb.environment()["LD_LIBRARY_PATH"] = ldLibraryPath
-            pb.environment()["PATH"] = "$nativeLibDir:$envPath"
-            pb.redirectErrorStream(false)
-
-            var currentItem = initialItem.copy(
-                filePath = finalOut.absolutePath,
-                fileName = finalOut.name
-            )
-            updateActiveDownload(currentItem)
-            onProgressUpdate?.invoke(currentItem)
-
-            val proc = pb.start()
-            activeStreamableProcesses[jobId] = proc
-
-            val reader = proc.inputStream.bufferedReader()
-            var lastProgressTime = 0L
-
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                if (pausedJobs.contains(jobId) || cancelledJobs.contains(jobId)) {
-                    proc.destroyForcibly()
-                    break
-                }
-                val l = line?.trim() ?: continue
-                if (l.startsWith("out_time_us=")) {
-                    val us = l.substringAfter("=").toLongOrNull() ?: 0L
-                    val sec = us / 1_000_000.0
-                    val pct = if (totalDur > 0.0) {
-                        minOf(99f, (sec / totalDur * 100.0).toFloat())
-                    } else currentItem.progress
-
-                    val now = System.currentTimeMillis()
-                    if (now - lastProgressTime >= 300L || pct - currentItem.progress >= 2f) {
-                        lastProgressTime = now
-                        val pctStr = String.format(Locale.US, "%.1f%%", pct)
-                        val statusStr = if (currentItem.speed.isNotBlank()) "$pctStr • ${currentItem.speed}" else pctStr
-                        currentItem = currentItem.copy(
-                            progress = pct,
-                            progressString = statusStr
-                        )
-                        updateActiveDownload(currentItem)
-                        onProgressUpdate?.invoke(currentItem)
-                    }
-                } else if (l.startsWith("total_size=")) {
-                    val bytes = l.substringAfter("=").toLongOrNull() ?: 0L
-                    if (bytes > 0L) {
-                        currentItem = currentItem.copy(
-                            totalBytes = bytes,
-                            filesizeFormatted = FormatUtils.formatBytes(bytes)
-                        )
-                    }
-                } else if (l.startsWith("speed=")) {
-                    val spd = l.substringAfter("=").trim()
-                    if (spd.isNotBlank()) {
-                        currentItem = currentItem.copy(speed = spd)
-                    }
-                }
-            }
-
-            activeStreamableProcesses.remove(jobId)
-
-            if (pausedJobs.remove(jobId) || _activeDownloads.value[jobId]?.status == DownloadStatus.PAUSED) {
-                val pausedItem = currentItem.copy(
-                    status = DownloadStatus.PAUSED,
-                    progressString = "Paused",
-                    speed = "",
-                    eta = ""
-                )
-                updateActiveDownload(pausedItem)
-                _downloadEvents.tryEmit(pausedItem)
-                onProgressUpdate?.invoke(pausedItem)
-                return@withContext pausedItem
-            }
-
-            if (cancelledJobs.remove(jobId)) {
-                finalOut.delete()
-                return@withContext null
-            }
-
-            val exitCode = proc.waitFor()
-            if (exitCode == 0 && finalOut.exists() && finalOut.length() > 0L) {
-                // Run 0.5-second faststart remux
-                try {
-                    val fsTmp = File(dlDir, "${jobId}___fs_${cleanTitle}.mp4")
-                    val remuxPb = ProcessBuilder(
-                        ffmpegBin.absolutePath,
-                        "-y",
-                        "-loglevel", "error",
-                        "-i", finalOut.absolutePath,
-                        "-c", "copy",
-                        "-movflags", "+faststart",
-                        fsTmp.absolutePath
-                    )
-                    remuxPb.environment()["LD_LIBRARY_PATH"] = ldLibraryPath
-                    val remuxProc = remuxPb.start()
-                    val remuxRc = remuxProc.waitFor()
-                    if (remuxRc == 0 && fsTmp.exists() && fsTmp.length() > 0L) {
-                        finalOut.delete()
-                        fsTmp.renameTo(finalOut)
-                    } else {
-                        fsTmp.delete()
-                    }
-                } catch (_: Exception) {}
-
-                // Final target rename
-                var targetFileName = "$cleanTitle.mp4"
-                var targetFile = File(dlDir, targetFileName)
-                var counter = 1
-                while (targetFile.exists() && targetFile.absolutePath != finalOut.absolutePath) {
-                    targetFileName = "$cleanTitle ($counter).mp4"
-                    targetFile = File(dlDir, targetFileName)
-                    counter++
-                }
-                if (finalOut.renameTo(targetFile)) {
-                    FileUtils.scanMediaFile(context, targetFile)
-                    val finalSize = targetFile.length()
-                    val completed = currentItem.copy(
-                        status = DownloadStatus.COMPLETED,
-                        progress = 100f,
-                        progressString = "Completed",
-                        filePath = targetFile.absolutePath,
-                        fileName = targetFile.name,
-                        totalBytes = finalSize,
-                        filesizeFormatted = FormatUtils.formatBytes(finalSize),
-                        completedAt = System.currentTimeMillis()
-                    )
-                    downloadConfigs.remove(jobId)
-                    removeActiveDownload(jobId)
-                    addToHistory(completed)
-                    _downloadEvents.tryEmit(completed)
-                    onProgressUpdate?.invoke(completed)
-                    return@withContext completed
-                }
-            }
-            null
-        } catch (e: Exception) {
-            Log.w("DownloadRepo", "Streamable download fallback for $jobId: ${e.message}")
-            null
+            Result.failure(Exception(userMsg, e))
         }
     }
 
@@ -1180,10 +846,28 @@ class DownloadRepository(private val context: Context) {
         )
     }
 
+    fun pauseDownload(jobId: String) {
+        pausedJobs.add(jobId)
+        val current = _activeDownloads.value[jobId]
+        if (current != null) {
+            val pausedItem = current.copy(
+                status = DownloadStatus.PAUSED,
+                progressString = "Paused",
+                speed = "",
+                eta = ""
+            )
+            updateActiveDownload(pausedItem)
+            _downloadEvents.tryEmit(pausedItem)
+        }
+        try {
+            YoutubeDL.getInstance().destroyProcessById(jobId)
+        } catch (e: Exception) {
+            Log.w("DownloadRepo", "Could not destroy process for pause $jobId", e)
+        }
+    }
+
     fun cancelDownload(jobId: String) {
         cancelledJobs.add(jobId)
-        activeStreamableProcesses[jobId]?.destroyForcibly()
-        activeStreamableProcesses.remove(jobId)
         pausedJobs.remove(jobId)
         downloadConfigs.remove(jobId)
         try {

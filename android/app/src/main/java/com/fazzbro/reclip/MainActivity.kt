@@ -499,25 +499,47 @@ class MainActivity : ComponentActivity() {
                     return "OK"
                 }
 
-                // Check if separate streams exist
-                val hasSeparateStreams = candidates.any { f ->
-                    val name = f.name.lowercase()
-                    name.contains(".f1") || name.contains(".f2") || name.contains(".f3") || name.endsWith(".m4a")
-                }
                 val hasPartFile = candidates.any { f ->
                     val name = f.name.lowercase()
                     name.endsWith(".part") || name.endsWith(".ytdl") || name.endsWith(".temp")
                 }
 
-                if (hasSeparateStreams) {
+                // Check if video DASH stream file exists
+                val videoStreamFiles = candidates.filter { f ->
+                    val name = f.name.lowercase()
+                    name.endsWith(".mp4") &&
+                        !name.endsWith(".part") &&
+                        !name.endsWith(".ytdl") &&
+                        !name.endsWith(".temp")
+                }
+
+                if (videoStreamFiles.isNotEmpty()) {
+                    val targetFile = videoStreamFiles.maxByOrNull { it.length() }!!
+                    if (targetFile.length() < 150 * 1024) {
+                        runOnUiThread {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Buffering video stream. Please wait 3 seconds and click Play again.",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        return "Buffering"
+                    }
+                    val uri = FileUtils.getContentUriForFile(this@MainActivity, targetFile)
+                    val mime = FileUtils.getMimeType(targetFile.name)
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, mime)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
                     runOnUiThread {
                         Toast.makeText(
                             this@MainActivity,
-                            "This download is downloading separate video and audio streams. Audio will be merged upon completion, or enable 'Play While Downloading' in Settings to stream both together.",
-                            Toast.LENGTH_LONG
+                            "Playing downloaded video stream (audio will merge upon download completion).",
+                            Toast.LENGTH_SHORT
                         ).show()
                     }
-                    return "Separate streams"
+                    startActivity(Intent.createChooser(intent, "Play Media"))
+                    return "OK"
                 }
 
                 val playableFiles = candidates.filter { f ->
