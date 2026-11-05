@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1280, height=640" />
+    <title>ReClip Social Preview Card</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      body {
+        width: 1280px;
+        height: 640px;
+        overflow: hidden;
+        background: #fbfbfd;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        color: #111111;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+      }
+
+      /* Subtle studio radial background lighting */
+      .canvas-bg {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at 50% 48%, rgba(255, 255, 255, 1) 0%, rgba(246, 247, 250, 0.95) 50%, rgba(235, 238, 243, 0.9) 100%);
+        z-index: 1;
+      }
+
+      /* Subtle micro-dot studio matrix */
+      .dot-grid {
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(rgba(0, 0, 0, 0.07) 1px, transparent 1px);
+        background-size: 28px 28px;
+        background-position: center center;
+        mask-image: radial-gradient(circle at 50% 50%, black 30%, transparent 80%);
+        -webkit-mask-image: radial-gradient(circle at 50% 50%, black 30%, transparent 80%);
+        z-index: 2;
+        pointer-events: none;
+      }
+
+      /* Subtle ambient vignette around edges */
+      .vignette {
+        position: absolute;
+        inset: 0;
+        box-shadow: inset 0 0 100px rgba(0, 0, 0, 0.04);
+        z-index: 3;
+        pointer-events: none;
+      }
+
+      /* Center Hero Block */
+      .hero-center {
+        position: relative;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        max-width: 680px;
+        padding: 0 20px;
+      }
+
+      .brand-lockup {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        background: rgba(255, 255, 255, 0.85);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        padding: 8px 18px 8px 10px;
+        border-radius: 9999px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+        margin-bottom: 24px;
+      }
+
+      .brand-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        object-fit: contain;
+        display: block;
+      }
+
+      .brand-title {
+        font-family: 'Inter', sans-serif;
+        font-weight: 800;
+        font-size: 17px;
+        letter-spacing: -0.02em;
+        color: #111111;
+      }
+
+      .brand-badge {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        background: #111111;
+        color: #ffffff;
+        padding: 2px 7px;
+        border-radius: 4px;
+        letter-spacing: 0.04em;
+      }
+
+      .headline {
+        font-size: 52px;
+        font-weight: 850;
+        line-height: 1.08;
+        letter-spacing: -0.04em;
+        color: #000000;
+        margin-bottom: 16px;
+      }
+
+      .headline .mono-accent {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        display: inline-block;
+        background: #000000;
+        color: #ffffff;
+        padding: 0 10px;
+        border-radius: 8px;
+        line-height: 1.15;
+        vertical-align: middle;
+        margin-left: 4px;
+      }
+
+      .sub-headline {
+        font-size: 18px;
+        font-weight: 450;
+        color: #555555;
+        line-height: 1.45;
+        letter-spacing: -0.015em;
+        margin-bottom: 28px;
+        max-width: 540px;
+      }
+
+      .cta-group {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .btn-primary {
+        background: #000000;
+        color: #ffffff;
+        font-size: 14px;
+        font-weight: 600;
+        padding: 12px 24px;
+        border-radius: 10px;
+        border: 1px solid #000000;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.25);
+        letter-spacing: -0.01em;
+      }
+
+      .btn-secondary {
+        background: #ffffff;
+        color: #111111;
+        font-size: 14px;
+        font-weight: 600;
+        padding: 12px 22px;
+        border-radius: 10px;
+        border: 1px solid rgba(0, 0, 0, 0.12);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        letter-spacing: -0.01em;
+      }
+
+      /* Floating Angled Cards (Studio Showcase) */
+      .card-float {
+        position: absolute;
+        z-index: 5;
+        background: #ffffff;
+        border: 1px solid rgba(0, 0, 0, 0.09);
+        border-radius: 18px;
+        padding: 18px 20px;
+        box-shadow:
+          0 24px 48px -12px rgba(16, 24, 40, 0.14),
+          0 4px 12px -2px rgba(16, 24, 40, 0.06),
+          0 0 0 1px rgba(255, 255, 255, 0.9) inset;
+        transition: transform 0.2s ease;
+      }
+
+      /* Card 1: Top Left - URL Input & Platform Badges */
+      .card-top-left {
+        top: 28px;
+        left: 20px;
+        width: 320px;
+        transform: rotate(-7deg);
+      }
+
+      .ctl-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+
+      .ctl-label {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        font-weight: 700;
+        color: #888888;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .ctl-status {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #111111;
+      }
+
+      .ctl-input-box {
+        background: #f8f8fa;
+        border: 1px solid #e5e5ea;
+        border-radius: 10px;
+        padding: 9px 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+
+      .ctl-input-text {
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        color: #777777;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 190px;
+      }
+
+      .ctl-paste-btn {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        font-weight: 700;
+        background: #ffffff;
+        border: 1px solid #e0e0e0;
+        color: #111111;
+        padding: 3px 8px;
+        border-radius: 5px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      }
+
+      .ctl-platforms {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .ctl-tag {
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        color: #333333;
+        background: #f2f2f5;
+        border: 1px solid #e5e5e8;
+        padding: 3px 8px;
+        border-radius: 6px;
+      }
+
+      .ctl-tag.highlight {
+        background: #111111;
+        color: #ffffff;
+        border-color: #111111;
+      }
+
+      /* Card 2: Top Right - Live Player & ExoPlayer Engine */
+      .card-top-right {
+        top: 24px;
+        right: 18px;
+        width: 324px;
+        transform: rotate(6deg);
+      }
+
+      .ctr-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .ctr-meta-tag {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #888888;
+      }
+
+      .ctr-title {
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        color: #000000;
+        margin-bottom: 4px;
+      }
+
+      .ctr-desc {
+        font-size: 11px;
+        color: #666666;
+        line-height: 1.4;
+        margin-bottom: 12px;
+      }
+
+      .ctr-checkpoint {
+        background: #0d0d0d;
+        color: #ffffff;
+        border-radius: 10px;
+        padding: 9px 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .ctr-checkpoint-text {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .ctr-dot-pulse {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #ffffff;
+      }
+
+      .ctr-bars {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+      }
+
+      .ctr-bar {
+        width: 3px;
+        border-radius: 2px;
+        background: #ffffff;
+      }
+
+      /* Card 3: Bottom Left - Formats & Multi-Audio */
+      .card-bottom-left {
+        bottom: 24px;
+        left: 28px;
+        width: 320px;
+        transform: rotate(5deg);
+      }
+
+      .cbl-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+
+      .cbl-label {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #888888;
+        letter-spacing: 0.05em;
+      }
+
+      .cbl-selector {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+
+      .cbl-pill {
+        flex: 1;
+        text-align: center;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 6px 0;
+        border-radius: 6px;
+        border: 1px solid #e0e0e0;
+        background: #f7f7f9;
+        color: #555555;
+      }
+
+      .cbl-pill.active {
+        background: #111111;
+        color: #ffffff;
+        border-color: #111111;
+      }
+
+      .cbl-resolutions {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+
+      .cbl-res-badge {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 4px 8px;
+        border-radius: 6px;
+        background: #ffffff;
+        border: 1px solid #d5d5d8;
+        color: #222222;
+      }
+
+      .cbl-res-badge.selected {
+        background: #f4f4f6;
+        border-color: #000000;
+        font-weight: 800;
+      }
+
+      .cbl-audio-tag {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: #fafafb;
+        border: 1px solid #eeeeee;
+        border-radius: 8px;
+        padding: 6px 10px;
+      }
+
+      .cbl-audio-text {
+        font-size: 10px;
+        font-weight: 600;
+        color: #444444;
+      }
+
+      .cbl-audio-badge {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 9px;
+        font-weight: 700;
+        color: #111111;
+        background: #eaeaea;
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+
+      /* Card 4: Bottom Right - Windows Native Workstation */
+      .card-bottom-right {
+        bottom: 22px;
+        right: 22px;
+        width: 326px;
+        transform: rotate(-5deg);
+      }
+
+      .cbr-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .cbr-tag {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        font-weight: 700;
+        color: #888888;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .cbr-title {
+        font-size: 15px;
+        font-weight: 800;
+        color: #000000;
+        letter-spacing: -0.02em;
+        margin-bottom: 10px;
+      }
+
+      .cbr-metrics {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+
+      .cbr-metric-box {
+        background: #f7f7fa;
+        border: 1px solid #e8e8ed;
+        border-radius: 8px;
+        padding: 6px 10px;
+      }
+
+      .cbr-metric-label {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 9px;
+        color: #888888;
+        text-transform: uppercase;
+        display: block;
+        margin-bottom: 2px;
+      }
+
+      .cbr-metric-val {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+        font-weight: 800;
+        color: #111111;
+      }
+
+      .cbr-footer {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        font-weight: 600;
+        color: #666666;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-top: 4px;
+        border-top: 1px solid #f0f0f2;
+      }
+
+      .cbr-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #111111;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="banner" data-start="0" data-duration="1" data-width="1280" data-height="640" style="width: 1280px; height: 640px; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center;">
+      <div class="canvas-bg"></div>
+      <div class="dot-grid"></div>
+      <div class="vignette"></div>
+
+      <!-- Center Hero -->
+      <div class="hero-center">
+      <div class="brand-lockup">
+        <img class="brand-icon" src="assets/logo.png" alt="ReClip Logo" />
+        <span class="brand-title">ReClip</span>
+        <span class="brand-badge">v1.3.8</span>
+      </div>
+
+      <h1 class="headline">
+        Every video on the web.<br />
+        Mapped.<span class="mono-accent">Native .</span>
+      </h1>
+
+      <p class="sub-headline">
+        The high-performance media downloader for Windows &amp; Android.<br />
+        Instant live playback. 1,000+ platforms. Zero bloat.
+      </p>
+
+      <div class="cta-group">
+        <div class="btn-primary">
+          <span>Download for Windows</span>
+          <span style="font-family: 'JetBrains Mono', monospace;">&rarr;</span>
+        </div>
+        <div class="btn-secondary">
+          <span>Get Android APK</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 1: Top-Left (Mobile Input & Platforms) -->
+    <div class="card-float card-top-left">
+      <div class="ctl-header">
+        <span class="ctl-label">Input Engine &bull; Fast Parser</span>
+        <div class="ctl-status"></div>
+      </div>
+      <div class="ctl-input-box">
+        <span class="ctl-input-text">Paste YouTube, TikTok, X link...</span>
+        <span class="ctl-paste-btn">PASTE</span>
+      </div>
+      <div class="ctl-platforms">
+        <span class="ctl-tag highlight">1000+ Sites</span>
+        <span class="ctl-tag">YouTube</span>
+        <span class="ctl-tag">TikTok</span>
+        <span class="ctl-tag">Twitter / X</span>
+        <span class="ctl-tag">Instagram</span>
+        <span class="ctl-tag">SoundCloud</span>
+      </div>
+    </div>
+
+    <!-- Card 2: Top-Right (Continuous Live Player) -->
+    <div class="card-float card-top-right">
+      <div class="ctr-meta">
+        <span class="ctr-meta-tag">ExoPlayer Pipeline</span>
+        <span class="ctr-meta-tag" style="color: #111111;">49.4% &bull; 8 MB/s</span>
+      </div>
+      <h3 class="ctr-title">Live Play While Downloading</h3>
+      <p class="ctr-desc">
+        Watch instantly from byte one without waiting. Seamless sequential chunk muxing.
+      </p>
+      <div class="ctr-checkpoint">
+        <div class="ctr-checkpoint-text">
+          <div class="ctr-dot-pulse"></div>
+          <span>LIVE STREAMING</span>
+        </div>
+        <div class="ctr-bars">
+          <div class="ctr-bar" style="height: 12px;"></div>
+          <div class="ctr-bar" style="height: 8px;"></div>
+          <div class="ctr-bar" style="height: 14px;"></div>
+          <div class="ctr-bar" style="height: 10px;"></div>
+          <div class="ctr-bar" style="height: 16px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 3: Bottom-Left (Format & Multi-Audio Selector) -->
+    <div class="card-float card-bottom-left">
+      <div class="cbl-row">
+        <span class="cbl-label">Format Control</span>
+        <span class="cbl-label" style="color: #111111;">64.4 MB Est.</span>
+      </div>
+      <div class="cbl-selector">
+        <div class="cbl-pill active">VIDEO (MP4)</div>
+        <div class="cbl-pill">AUDIO (MP3)</div>
+      </div>
+      <div class="cbl-resolutions">
+        <span class="cbl-res-badge selected">1080p</span>
+        <span class="cbl-res-badge">720p</span>
+        <span class="cbl-res-badge">480p</span>
+        <span class="cbl-res-badge">360p</span>
+      </div>
+      <div class="cbl-audio-tag">
+        <span class="cbl-audio-text">Multi-Language Dubs</span>
+        <span class="cbl-audio-badge">8 LANGUAGES</span>
+      </div>
+    </div>
+
+    <!-- Card 4: Bottom-Right (Windows Desktop Workstation) -->
+    <div class="card-float card-bottom-right">
+      <div class="cbr-header">
+        <span class="cbr-tag">Windows Workstation</span>
+        <div class="cbr-dot"></div>
+      </div>
+      <h3 class="cbr-title">Native Desktop Engine</h3>
+      <div class="cbr-metrics">
+        <div class="cbr-metric-box">
+          <span class="cbr-metric-label">Max Quality</span>
+          <span class="cbr-metric-val">4K UHD</span>
+        </div>
+        <div class="cbr-metric-box">
+          <span class="cbr-metric-label">Overhead</span>
+          <span class="cbr-metric-val">0% Bloat</span>
+        </div>
+      </div>
+      <div class="cbr-footer">
+        <div class="cbr-dot"></div>
+        <span>Multi-Threaded &bull; Direct MP3 Split</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+  <script>
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+    window.__timelines["banner"] = tl;
+    tl.seek(0);
+  </script>
+  </body>
+</html>

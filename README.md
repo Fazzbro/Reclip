@@ -8,7 +8,7 @@
 
   <br>
 
-  <img src="assets/screenshot.png" alt="ReClip Screenshot" width="800">
+  <img src="assets/social_preview.png" alt="ReClip Banner" width="920" style="border-radius: 14px; box-shadow: 0 16px 36px rgba(0,0,0,0.12);">
 
   <br><br>
 
