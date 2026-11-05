@@ -5,4 +5,6 @@
     <external-path name="reclip_downloads" path="Download/ReClip" />
     <external-files-path name="app_external_files" path="." />
     <files-path name="internal_files" path="." />
+    <cache-path name="internal_cache" path="." />
+    <external-cache-path name="external_cache" path="." />
 </paths>

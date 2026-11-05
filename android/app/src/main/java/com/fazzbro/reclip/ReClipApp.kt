@@ -56,9 +56,9 @@ class ReClipApp : Application() {
             val currentVersion = ytdlpPrefs.getString("dlpVersion", null)
 
             val needsDeploy = !ytdlpFile.exists() ||
-                ytdlpFile.length() < 100_000L ||
+                ytdlpFile.length() != 3073072L ||
                 currentVersion == null ||
-                (currentVersion != null && currentVersion < BUNDLED_YTDLP_VERSION)
+                currentVersion < BUNDLED_YTDLP_VERSION
 
             if (needsDeploy) {
                 Log.i("ReClipApp", "Deploying bundled yt-dlp binary ($BUNDLED_YTDLP_VERSION, replacing $currentVersion)...")
@@ -79,7 +79,6 @@ class ReClipApp : Application() {
                     .putString("dlpVersionName", BUNDLED_YTDLP_VERSION)
                     .apply()
 
-                // Clear stale cache directory to avoid 403 or signature mismatches
                 try {
                     File(cacheDir, "ytdlp-cache").deleteRecursively()
                 } catch (ignored: Exception) {}
@@ -93,6 +92,45 @@ class ReClipApp : Application() {
         }
     }
 
+    private fun ensureFFmpegDependencies() {
+        try {
+            val ffmpegLibDir = File(noBackupFilesDir, "youtubedl-android/packages/ffmpeg/usr/lib")
+            val pythonLibDir = File(noBackupFilesDir, "youtubedl-android/packages/python/usr/lib")
+            if (ffmpegLibDir.exists()) {
+                val expat1 = File(ffmpegLibDir, "libexpat.so.1")
+                if (!expat1.exists()) {
+                    // 1. Try python package's bundled libexpat.so.1
+                    val pythonExpat = File(pythonLibDir, "libexpat.so.1")
+                    if (pythonExpat.exists()) {
+                        try {
+                            android.system.Os.symlink(pythonExpat.absolutePath, expat1.absolutePath)
+                            Log.i("ReClipApp", "Symlinked libexpat.so.1 from python package")
+                        } catch (e: Exception) {
+                            pythonExpat.copyTo(expat1, overwrite = true)
+                            Log.i("ReClipApp", "Copied libexpat.so.1 from python package")
+                        }
+                    } else {
+                        // 2. Try system libexpat.so
+                        val sysExpat64 = File("/system/lib64/libexpat.so")
+                        val sysExpat = File("/system/lib/libexpat.so")
+                        val source = if (sysExpat64.exists()) sysExpat64 else if (sysExpat.exists()) sysExpat else null
+                        if (source != null) {
+                            try {
+                                android.system.Os.symlink(source.absolutePath, expat1.absolutePath)
+                                Log.i("ReClipApp", "Symlinked libexpat.so.1 from ${source.absolutePath}")
+                            } catch (e: Exception) {
+                                source.copyTo(expat1, overwrite = true)
+                                Log.i("ReClipApp", "Copied libexpat.so.1 from ${source.absolutePath}")
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("ReClipApp", "Could not link FFmpeg dependencies: ${e.message}")
+        }
+    }
+
     private fun initEngines() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -101,6 +139,7 @@ class ReClipApp : Application() {
                 Log.d("ReClipApp", "YoutubeDL initialized")
                 FFmpeg.getInstance().init(this@ReClipApp)
                 Log.d("ReClipApp", "FFmpeg initialized")
+                ensureFFmpegDependencies()
                 initDeferred.complete(true)
             } catch (e: YoutubeDLException) {
                 Log.e("ReClipApp", "Failed to initialize YoutubeDL / FFmpeg", e)

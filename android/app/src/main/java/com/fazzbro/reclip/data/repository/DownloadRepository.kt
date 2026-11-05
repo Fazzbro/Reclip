@@ -45,6 +45,14 @@ data class DownloadConfig(
     val audioLang: String
 )
 
+data class CachedStreamMeta(
+    val timestamp: Long,
+    val title: String,
+    val durationSeconds: Long,
+    val videoUrlsByHeight: Map<Int, String>,
+    val audioUrlsByLang: Map<String, String>
+)
+
 class DownloadRepository(private val context: Context) {
 
     companion object {
@@ -75,9 +83,12 @@ class DownloadRepository(private val context: Context) {
     val downloadHistory: StateFlow<List<DownloadItem>> = _downloadHistory.asStateFlow()
 
     private val activeJobProcesses = ConcurrentHashMap<String, String>()
+    private val activeCoroutineJobs = ConcurrentHashMap<String, kotlinx.coroutines.Job>()
     private val downloadConfigs = ConcurrentHashMap<String, DownloadConfig>()
     private val pausedJobs = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
     private val cancelledJobs = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    private val streamMetaCache = ConcurrentHashMap<String, CachedStreamMeta>()
+    private val activeStreamableProcesses = ConcurrentHashMap<String, Process>()
 
     init {
         loadHistory()
@@ -102,16 +113,12 @@ class DownloadRepository(private val context: Context) {
     }
 
     private fun applyCommonOptions(request: YoutubeDLRequest) {
-        request.addOption("-4") // Force IPv4 to prevent IPv6 socket hangs on mobile / ISP networks
         request.addOption("--geo-bypass")
         request.addOption("--no-check-certificates")
         request.addOption("--socket-timeout", "20")
         request.addOption("--retries", "3")
         request.addOption("--fragment-retries", "5")
-
-        val cacheDir = File(context.cacheDir, "ytdlp-cache")
-        if (!cacheDir.exists()) cacheDir.mkdirs()
-        request.addOption("--cache-dir", cacheDir.absolutePath)
+        request.addOption("--no-cache-dir")
 
         val cookiePath = cookieManager.getCookiePath()
         if (cookiePath != null) {
@@ -284,9 +291,9 @@ class DownloadRepository(private val context: Context) {
                             var s = 0L
                             if (hasSize) s += 10000L
                             if (iExt == "mp4") s += 1000L
-                            if (iVc.contains("av01")) s += 500L
+                            if (iVc.contains("avc") || iVc.contains("h264")) s += 800L
+                            else if (iVc.contains("av01")) s += 500L
                             else if (iVc.contains("vp9")) s += 300L
-                            else if (iVc.contains("avc") || iVc.contains("h264")) s += 100L
                             return s
                         }
                         if (score(f) > score(existing)) {
@@ -438,6 +445,57 @@ class DownloadRepository(private val context: Context) {
                     ?: formatsList.firstOrNull()?.filesize ?: 0L
             }
 
+            val videoUrls = mutableMapOf<Int, String>()
+            for ((h, fObj) in bestByHeight) {
+                val directUrl = fObj.optString("url", "")
+                if (directUrl.isNotBlank()) {
+                    videoUrls[h] = directUrl
+                }
+            }
+
+            val audioUrls = mutableMapOf<String, String>()
+            var bestM4aAudioUrl = ""
+            var fallbackAudioUrl = ""
+
+            for (i in 0 until formatsArray.length()) {
+                val f = formatsArray.optJSONObject(i) ?: continue
+                val fUrl = f.optString("url", "")
+                if (fUrl.isBlank()) continue
+                val vcodec = f.optString("vcodec", "")
+                val acodec = f.optString("acodec", "")
+                val isAudioOnly = (vcodec == "none" || vcodec.isEmpty()) && (acodec != "none" && acodec.isNotEmpty())
+                if (isAudioOnly) {
+                    val fid = f.optString("format_id", "")
+                    val lang = f.optString("language", "").lowercase()
+                    val ext = f.optString("ext", "").lowercase()
+                    if (lang.isNotBlank() && (!audioUrls.containsKey(lang) || ext == "m4a")) {
+                        audioUrls[lang] = fUrl
+                    }
+                    if (ext == "m4a" || fid.contains("140")) {
+                        if (bestM4aAudioUrl.isBlank() || fid.contains("140")) {
+                            bestM4aAudioUrl = fUrl
+                        }
+                    }
+                    if (fallbackAudioUrl.isBlank()) {
+                        fallbackAudioUrl = fUrl
+                    }
+                }
+            }
+            val defaultAudio = if (bestM4aAudioUrl.isNotBlank()) bestM4aAudioUrl else fallbackAudioUrl
+            if (defaultAudio.isNotBlank()) {
+                audioUrls["default"] = defaultAudio
+            }
+
+            val metaObj = CachedStreamMeta(
+                timestamp = System.currentTimeMillis(),
+                title = title,
+                durationSeconds = duration,
+                videoUrlsByHeight = videoUrls,
+                audioUrlsByLang = audioUrls
+            )
+            streamMetaCache[url] = metaObj
+            streamMetaCache[normalizeUrl(rawUrl)] = metaObj
+
             val mediaInfo = MediaInfo(
                 url = if (redditMeta != null) redditMeta.streamUrl else url,
                 title = title,
@@ -500,7 +558,17 @@ class DownloadRepository(private val context: Context) {
         val jobId = if (customJobId.isNotBlank()) customJobId else UUID.randomUUID().toString().take(8)
         val dlDir = FileUtils.getReclipDownloadDir(context)
 
+        coroutineContext[kotlinx.coroutines.Job]?.let { job ->
+            activeCoroutineJobs[jobId] = job
+        }
+
         // Save config for pause/resume support
+        if (cancelledJobs.contains(jobId)) {
+            activeCoroutineJobs.remove(jobId)
+            removeActiveDownload(jobId)
+            return@withContext Result.failure(Exception("Download cancelled"))
+        }
+
         downloadConfigs[jobId] = DownloadConfig(
             url = url,
             title = title,
@@ -510,7 +578,6 @@ class DownloadRepository(private val context: Context) {
             audioLang = audioLang
         )
         pausedJobs.remove(jobId)
-        cancelledJobs.remove(jobId)
 
         val cleanTitle = FormatUtils.sanitizeFilename(title)
         val ext = if (formatType == MediaFormatType.AUDIO) "mp3" else "mp4"
@@ -548,6 +615,22 @@ class DownloadRepository(private val context: Context) {
             return@withContext Result.success(paused)
         }
 
+        if (isStreamableDownloadEnabled() && formatType == MediaFormatType.VIDEO) {
+            val streamResult = runStreamableMultiplexedDownload(
+                jobId = jobId,
+                url = normalizedUrl,
+                title = cleanTitle,
+                qualityOption = qualityOption,
+                audioLang = audioLang,
+                dlDir = dlDir,
+                initialItem = item,
+                onProgressUpdate = onProgressUpdate
+            )
+            if (streamResult != null) {
+                return@withContext Result.success(streamResult)
+            }
+        }
+
         try {
             val request = YoutubeDLRequest(normalizedUrl)
             val outputTemplate = "${dlDir.absolutePath}/${jobId}___%(title).100B.%(ext)s"
@@ -557,9 +640,7 @@ class DownloadRepository(private val context: Context) {
             request.addOption("--no-playlist")
             applyCommonOptions(request)
 
-            if (isStreamableDownloadEnabled() && formatType == MediaFormatType.VIDEO) {
-                request.addOption("--no-part")
-            }
+
 
             if (formatType == MediaFormatType.AUDIO) {
                 if (audioLang.isNotBlank() && audioLang != "default" && audioLang != "all") {
@@ -825,6 +906,8 @@ class DownloadRepository(private val context: Context) {
             _downloadEvents.tryEmit(errorItem)
             onProgressUpdate?.invoke(errorItem)
             Result.failure(Exception(userMsg, e))
+        } finally {
+            activeCoroutineJobs.remove(jobId)
         }
     }
 
@@ -848,8 +931,317 @@ class DownloadRepository(private val context: Context) {
         )
     }
 
+    private suspend fun runStreamableMultiplexedDownload(
+        jobId: String,
+        url: String,
+        title: String,
+        qualityOption: FormatOption?,
+        audioLang: String,
+        dlDir: File,
+        initialItem: DownloadItem,
+        onProgressUpdate: ((DownloadItem) -> Unit)?
+    ): DownloadItem? = withContext(Dispatchers.IO) {
+        var item = initialItem
+        val cleanTitle = FormatUtils.sanitizeFilename(title)
+        val targetHeight = qualityOption?.height ?: 1080
+        var videoUrl: String? = null
+        var audioUrl: String? = null
+        var totalDuration: Long = 0L
+
+        // 1. Check cache first
+        val cached = streamMetaCache[url] ?: streamMetaCache[normalizeUrl(url)]
+        if (cached != null && System.currentTimeMillis() - cached.timestamp < 2 * 3600 * 1000L) {
+            videoUrl = cached.videoUrlsByHeight[targetHeight]
+                ?: cached.videoUrlsByHeight.entries.filter { it.key <= targetHeight }.maxByOrNull { it.key }?.value
+                ?: cached.videoUrlsByHeight.values.firstOrNull()
+            audioUrl = if (audioLang.isNotBlank() && audioLang != "default" && audioLang != "all") {
+                cached.audioUrlsByLang[audioLang] ?: cached.audioUrlsByLang["default"]
+            } else {
+                cached.audioUrlsByLang["default"]
+            }
+            totalDuration = cached.durationSeconds
+        }
+
+        // 2. Fallback to direct extraction via yt-dlp -g if not cached
+        if (videoUrl.isNullOrBlank()) {
+            try {
+                val gReq = YoutubeDLRequest(url)
+                gReq.addOption("-g")
+                gReq.addOption("--print", "%(title)s\t%(duration)s")
+                val fmtSpec = if (targetHeight > 0) {
+                    "bestvideo[height<=$targetHeight][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=$targetHeight]+bestaudio/best[height<=$targetHeight]/best"
+                } else {
+                    "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+                }
+                gReq.addOption("-f", fmtSpec)
+                applyCommonOptions(gReq)
+                val gResp = YoutubeDL.getInstance().execute(gReq)
+                val lines = gResp.out?.lines()?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+                val urlLines = lines.filter { it.startsWith("http://") || it.startsWith("https://") }
+                val metaLine = lines.firstOrNull { it.contains("\t") }
+                if (metaLine != null) {
+                    val metaParts = metaLine.split("\t")
+                    if (metaParts.size > 1) {
+                        totalDuration = metaParts[1].toDoubleOrNull()?.toLong() ?: 0L
+                    }
+                }
+                if (urlLines.isNotEmpty()) {
+                    videoUrl = urlLines[0]
+                    if (urlLines.size > 1) {
+                        audioUrl = urlLines[1]
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("DownloadRepository", "Direct URL extraction with yt-dlp -g failed: ${e.message}")
+            }
+        }
+
+        if (videoUrl.isNullOrBlank()) {
+            Log.i("DownloadRepository", "Direct stream URLs not available, falling back to standard yt-dlp download")
+            return@withContext null
+        }
+
+        val nativeLibDir = context.applicationInfo.nativeLibraryDir
+        val ffmpegBin = File(nativeLibDir, "libffmpeg.so")
+        val packagesDir = File(context.noBackupFilesDir, "youtubedl-android/packages")
+        val ffmpegLibDir = File(packagesDir, "ffmpeg/usr/lib")
+        val pythonLibDir = File(packagesDir, "python/usr/lib")
+        val quickjsLibDir = File(packagesDir, "quickjs/usr/lib")
+        if (!ffmpegBin.exists()) {
+            Log.w("DownloadRepository", "FFmpeg binary not found at ${ffmpegBin.absolutePath}")
+            return@withContext null
+        }
+
+        val targetStreamFile = File(dlDir, "${jobId}___${cleanTitle}.mp4")
+        if (targetStreamFile.exists()) targetStreamFile.delete()
+
+        item = item.copy(filePath = targetStreamFile.absolutePath)
+        updateActiveDownload(item)
+        _downloadEvents.tryEmit(item)
+        onProgressUpdate?.invoke(item)
+
+        val ffCmd = mutableListOf<String>()
+        ffCmd.add(ffmpegBin.absolutePath)
+        ffCmd.add("-y")
+        ffCmd.add("-loglevel")
+        ffCmd.add("info")
+
+        val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        // Video input
+        ffCmd.add("-tls_verify")
+        ffCmd.add("0")
+        ffCmd.add("-headers")
+        ffCmd.add("User-Agent: $ua\r\n")
+        ffCmd.add("-reconnect")
+        ffCmd.add("1")
+        ffCmd.add("-reconnect_streamed")
+        ffCmd.add("1")
+        ffCmd.add("-reconnect_delay_max")
+        ffCmd.add("5")
+        ffCmd.add("-i")
+        ffCmd.add(videoUrl)
+
+        // Audio input: simultaneous multiplexing into fragmented MP4 container
+        if (!audioUrl.isNullOrBlank() && audioUrl != videoUrl) {
+            ffCmd.add("-tls_verify")
+            ffCmd.add("0")
+            ffCmd.add("-headers")
+            ffCmd.add("User-Agent: $ua\r\n")
+            ffCmd.add("-reconnect")
+            ffCmd.add("1")
+            ffCmd.add("-reconnect_streamed")
+            ffCmd.add("1")
+            ffCmd.add("-reconnect_delay_max")
+            ffCmd.add("5")
+            ffCmd.add("-i")
+            ffCmd.add(audioUrl)
+
+            ffCmd.add("-c:v")
+            ffCmd.add("copy")
+            ffCmd.add("-c:a")
+            val isM4a = audioUrl.contains(".m4a") || audioUrl.contains("audio%2Fmp4") || audioUrl.contains("audio/mp4")
+            if (isM4a) {
+                ffCmd.add("copy")
+            } else {
+                ffCmd.add("aac")
+            }
+        } else {
+            ffCmd.add("-c")
+            ffCmd.add("copy")
+        }
+
+        ffCmd.add("-movflags")
+        ffCmd.add("frag_keyframe+empty_moov+default_base_moof+dash")
+        ffCmd.add("-progress")
+        ffCmd.add("pipe:1")
+        ffCmd.add(targetStreamFile.absolutePath)
+
+        val pb = ProcessBuilder(ffCmd)
+        val env = pb.environment()
+        env["LD_LIBRARY_PATH"] = "${pythonLibDir.absolutePath}:${ffmpegLibDir.absolutePath}:${quickjsLibDir.absolutePath}:$nativeLibDir"
+        env["PYTHONHOME"] = File(packagesDir, "python/usr").absolutePath
+        env["TMPDIR"] = context.cacheDir.absolutePath
+        val certFile = File(packagesDir, "python/usr/etc/tls/cert.pem")
+        if (certFile.exists()) {
+            env["SSL_CERT_FILE"] = certFile.absolutePath
+        }
+        env["HOME"] = context.filesDir.absolutePath
+        pb.redirectErrorStream(true)
+
+        val proc: Process
+        try {
+            proc = pb.start()
+            activeStreamableProcesses[jobId] = proc
+        } catch (e: Exception) {
+            Log.w("DownloadRepository", "Failed to start FFmpeg process: ${e.message}")
+            targetStreamFile.delete()
+            return@withContext null
+        }
+
+        var lastProgressEmit = 0L
+        var lastBytes = 0L
+        var lastTime = System.currentTimeMillis()
+        var currentSpeed = ""
+        var currentEta = ""
+        val errLog = StringBuilder()
+
+        try {
+            proc.inputStream.bufferedReader().useLines { lines ->
+                for (line in lines) {
+                    if (cancelledJobs.contains(jobId) || pausedJobs.contains(jobId)) {
+                        proc.destroy()
+                        break
+                    }
+                    val trimmed = line.trim()
+                    if (trimmed.startsWith("out_time_ms=") || trimmed.startsWith("out_time_us=")) {
+                        val parts = trimmed.split("=")
+                        if (parts.size == 2) {
+                            val us = parts[1].toLongOrNull() ?: 0L
+                            val curSec = if (trimmed.startsWith("out_time_ms=")) us / 1000.0 else us / 1_000_000.0
+                            val pct = if (totalDuration > 0) {
+                                ((curSec / totalDuration.toDouble()) * 100.0).coerceIn(0.0, 99.9).toFloat()
+                            } else {
+                                item.progress
+                            }
+
+                            val now = System.currentTimeMillis()
+                            if (now - lastProgressEmit >= 350) {
+                                val dt = (now - lastTime) / 1000.0
+                                val curBytes = targetStreamFile.length()
+                                if (dt > 0.3) {
+                                    val dBytes = curBytes - lastBytes
+                                    val bps = (dBytes / dt).toLong()
+                                    if (bps > 0) {
+                                        currentSpeed = FormatUtils.formatBytes(bps) + "/s"
+                                        if (totalDuration > 0 && curSec > 0) {
+                                            val remSec = (totalDuration - curSec).coerceAtLeast(0.0)
+                                            currentEta = FormatUtils.formatDuration(remSec.toLong())
+                                        }
+                                    }
+                                    lastBytes = curBytes
+                                    lastTime = now
+                                }
+                                lastProgressEmit = now
+
+                                item = item.copy(
+                                    progress = pct,
+                                    progressString = "${String.format(Locale.US, "%.1f", pct)}%",
+                                    speed = currentSpeed,
+                                    eta = currentEta,
+                                    currentBytes = targetStreamFile.length(),
+                                    filesizeFormatted = FormatUtils.formatBytes(targetStreamFile.length())
+                                )
+                                updateActiveDownload(item)
+                                _downloadEvents.tryEmit(item)
+                                onProgressUpdate?.invoke(item)
+                            }
+                        }
+                    } else if (!trimmed.startsWith("progress=")) {
+                        if (errLog.length < 3000) {
+                            errLog.append(trimmed).append("\n")
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("DownloadRepository", "Error reading FFmpeg stream progress: ${e.message}")
+        }
+
+        val exitCode = proc.waitFor()
+        activeStreamableProcesses.remove(jobId)
+
+        if (cancelledJobs.contains(jobId)) {
+            targetStreamFile.delete()
+            removeActiveDownload(jobId)
+            throw Exception("Download cancelled")
+        }
+        if (pausedJobs.contains(jobId)) {
+            val paused = item.copy(status = DownloadStatus.PAUSED, progressString = "Paused", speed = "", eta = "")
+            updateActiveDownload(paused)
+            _downloadEvents.tryEmit(paused)
+            return@withContext paused
+        }
+
+        if (exitCode == 0 && targetStreamFile.exists() && targetStreamFile.length() > 250 * 1024) {
+            var targetFileName = "$title.mp4"
+            var finalFile = File(dlDir, targetFileName)
+            var counter = 1
+            while (finalFile.exists()) {
+                targetFileName = "$title ($counter).mp4"
+                finalFile = File(dlDir, targetFileName)
+                counter++
+            }
+
+            val renamed = targetStreamFile.renameTo(finalFile)
+            if (!renamed || !finalFile.exists()) {
+                try {
+                    targetStreamFile.inputStream().use { input ->
+                        finalFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    targetStreamFile.delete()
+                } catch (e: Exception) {
+                    finalFile = targetStreamFile
+                }
+            }
+
+            val finalSize = finalFile.length()
+            FileUtils.scanMediaFile(context, finalFile)
+
+            val completedItem = item.copy(
+                status = DownloadStatus.COMPLETED,
+                progress = 100f,
+                progressString = "Completed",
+                filePath = finalFile.absolutePath,
+                fileName = finalFile.name,
+                totalBytes = finalSize,
+                filesizeFormatted = FormatUtils.formatBytes(finalSize),
+                speed = "",
+                eta = "",
+                completedAt = System.currentTimeMillis()
+            )
+
+            downloadConfigs.remove(jobId)
+            removeActiveDownload(jobId)
+            addToHistory(completedItem)
+            _downloadEvents.tryEmit(completedItem)
+            onProgressUpdate?.invoke(completedItem)
+
+            return@withContext completedItem
+        } else {
+            Log.w("DownloadRepository", "FFmpeg stream multiplexing exited with code $exitCode or small file (${targetStreamFile.length()} bytes). Log:\n$errLog")
+            targetStreamFile.delete()
+            return@withContext null
+        }
+    }
     fun pauseDownload(jobId: String) {
         pausedJobs.add(jobId)
+        activeCoroutineJobs.remove(jobId)?.cancel()
+        activeStreamableProcesses.remove(jobId)?.let { proc ->
+            try { proc.destroy() } catch (ignored: Exception) {}
+        }
         val current = _activeDownloads.value[jobId]
         if (current != null) {
             val pausedItem = current.copy(
@@ -872,6 +1264,12 @@ class DownloadRepository(private val context: Context) {
         cancelledJobs.add(jobId)
         pausedJobs.remove(jobId)
         downloadConfigs.remove(jobId)
+        activeCoroutineJobs.remove(jobId)?.cancel()
+        activeStreamableProcesses.remove(jobId)?.let { proc ->
+            try { proc.destroy() } catch (ignored: Exception) {}
+        }
+        val tempStream = File(context.cacheDir, "stream_${jobId}.mp4")
+        if (tempStream.exists()) tempStream.delete()
         try {
             YoutubeDL.getInstance().destroyProcessById(jobId)
         } catch (e: Exception) {

@@ -12,8 +12,8 @@ android {
         applicationId = "com.fazzbro.reclip"
         minSdk = 24
         targetSdk = 34
-        versionCode = 15
-        versionName = "1.3.10"
+        versionCode = 19
+        versionName = "1.3.14"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -38,6 +38,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            isDebuggable = true
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

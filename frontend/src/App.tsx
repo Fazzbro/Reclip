@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 import {
 
@@ -118,6 +118,10 @@ export default function App() {
 
   const [historyItems, setHistoryItems] = useState<DownloadItem[]>([]);
 
+  const cancelledJobIdsRef = useRef<Set<string>>(new Set());
+
+  const pausedJobIdsRef = useRef<Set<string>>(new Set());
+
   const [hasCookies, setHasCookies] = useState(false);
 
 
@@ -188,6 +192,22 @@ export default function App() {
 
     const unsubProgress = nativeBridge.onProgress((item) => {
 
+      if (cancelledJobIdsRef.current.has(item.id)) {
+
+        if (item.status === 'CANCELLED') {
+
+          cancelledJobIdsRef.current.delete(item.id);
+
+        }
+
+        setActiveDownloads((prev) => prev.filter((d) => d.id !== item.id && d.url !== item.url));
+
+        return;
+
+      }
+
+
+
       if (item.status === 'COMPLETED') {
 
         setActiveDownloads((prev) => prev.filter((d) => d.id !== item.id && d.url !== item.url));
@@ -204,11 +224,15 @@ export default function App() {
 
       } else if (item.status === 'CANCELLED') {
 
+        cancelledJobIdsRef.current.delete(item.id);
+
+        pausedJobIdsRef.current.delete(item.id);
+
         setActiveDownloads((prev) => prev.filter((d) => d.id !== item.id && d.url !== item.url));
 
         setHistoryItems(nativeBridge.getHistory());
 
-      } else if (item.status === 'PAUSED') {
+      } else if (item.status === 'PAUSED' || pausedJobIdsRef.current.has(item.id)) {
 
         setActiveDownloads((prev) =>
           prev.map((d) => (d.id === item.id || d.url === item.url ? { ...d, status: 'PAUSED', progressString: 'Paused', speed: '', eta: '' } : d))
@@ -408,6 +432,10 @@ export default function App() {
 
   const handleCancelDownload = (id: string) => {
 
+    cancelledJobIdsRef.current.add(id);
+
+    pausedJobIdsRef.current.delete(id);
+
     setActiveDownloads((prev) => prev.filter((d) => d.id !== id));
 
     nativeBridge.cancelDownload(id);
@@ -417,6 +445,8 @@ export default function App() {
 
 
   const handlePauseDownload = (id: string) => {
+
+    pausedJobIdsRef.current.add(id);
 
     setActiveDownloads((prev) =>
 
@@ -435,6 +465,8 @@ export default function App() {
 
 
   const handleResumeDownload = (id: string) => {
+
+    pausedJobIdsRef.current.delete(id);
 
     setActiveDownloads((prev) =>
 

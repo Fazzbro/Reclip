@@ -135,7 +135,11 @@ class NativeBridgeService {
             try {
               const parsed = JSON.parse(resultJson);
               if (parsed.error) {
-                reject(new Error(parsed.error));
+                const msg = String(parsed.error).trim();
+                const clean = msg === 'Failed' || msg.length === 0
+                  ? 'Unable to extract media from this URL. Please verify the URL and your connection.'
+                  : msg;
+                reject(new Error(clean));
               } else {
                 resolve(parsed as MediaInfo);
               }
@@ -153,7 +157,11 @@ class NativeBridgeService {
         const resultJson = window.AndroidBridge.fetchInfo(url);
         const parsed = JSON.parse(resultJson);
         if (parsed.error) {
-          throw new Error(parsed.error);
+          const msg = String(parsed.error).trim();
+          const clean = msg === 'Failed' || msg.length === 0
+            ? 'Unable to extract media from this URL. Please verify the URL and your connection.'
+            : msg;
+          throw new Error(clean);
         }
         return parsed as MediaInfo;
       }

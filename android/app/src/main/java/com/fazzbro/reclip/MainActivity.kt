@@ -24,6 +24,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.WebViewAssetLoader
 import com.fazzbro.reclip.data.model.FormatOption
+import com.fazzbro.reclip.player.PlayerActivity
 import com.fazzbro.reclip.data.model.MediaFormatType
 import com.fazzbro.reclip.data.repository.DownloadRepository
 import com.fazzbro.reclip.service.DownloadService
@@ -420,6 +421,18 @@ class MainActivity : ComponentActivity() {
             repository.clearHistory()
         }
 
+        private fun launchInAppPlayer(jobId: String, filePath: String, title: String) {
+            runOnUiThread {
+                val intent = Intent(this@MainActivity, PlayerActivity::class.java).apply {
+                    putExtra(PlayerActivity.EXTRA_JOB_ID, jobId)
+                    putExtra(PlayerActivity.EXTRA_FILE_PATH, filePath)
+                    putExtra(PlayerActivity.EXTRA_TITLE, title)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+            }
+        }
+
         @JavascriptInterface
         fun playJob(jobId: String): String {
             try {
@@ -428,7 +441,7 @@ class MainActivity : ComponentActivity() {
                 if (historyItem != null && historyItem.filePath.isNotBlank()) {
                     val file = File(historyItem.filePath)
                     if (file.exists()) {
-                        playMedia(file.absolutePath)
+                        launchInAppPlayer(jobId, file.absolutePath, historyItem.title)
                         return "OK"
                     }
                 }
@@ -438,144 +451,42 @@ class MainActivity : ComponentActivity() {
                 if (activeItem != null && activeItem.filePath.isNotBlank()) {
                     val activeFile = File(activeItem.filePath)
                     if (activeFile.exists()) {
-                        if (activeFile.length() < 150 * 1024) {
+                        if (activeFile.length() < 250 * 1024) {
                             runOnUiThread {
                                 Toast.makeText(
                                     this@MainActivity,
-                                    "Buffering initial media stream. Please wait 3 seconds and click Play again.",
+                                    "Buffering media stream. Please wait 3 seconds and tap Play again.",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
                             return "Buffering"
                         }
-                        val uri = FileUtils.getContentUriForFile(this@MainActivity, activeFile)
-                        val mime = FileUtils.getMimeType(activeFile.name)
-                        val intent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, mime)
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        startActivity(Intent.createChooser(intent, "Play Media"))
+                        launchInAppPlayer(jobId, activeFile.absolutePath, activeItem.title)
                         return "OK"
                     }
                 }
 
-                // 3. Search active download directory for candidate files starting with jobId
+                // 3. Check for any stream file candidates in dlDir or cacheDir
                 val dlDir = FileUtils.getReclipDownloadDir(this@MainActivity)
-                val candidates = dlDir.listFiles { file ->
-                    file.name.startsWith(jobId)
-                } ?: emptyArray()
+                val streamCandidate = dlDir.listFiles { _, name ->
+                    name.startsWith(jobId) && name.endsWith(".mp4") && !name.endsWith(".part") && !name.endsWith(".temp")
+                }?.firstOrNull() ?: File(cacheDir, "stream_${jobId}.mp4")
 
-                // Look for unified streamable mp4 files first
-                val unifiedFiles = candidates.filter { f ->
-                    val name = f.name.lowercase()
-                    name.endsWith(".mp4") &&
-                        !name.endsWith(".part") &&
-                        !name.endsWith(".ytdl") &&
-                        !name.endsWith(".temp") &&
-                        !name.endsWith(".fs.mp4") &&
-                        !name.contains(".f1") &&
-                        !name.contains(".f2") &&
-                        !name.contains(".f3")
-                }
-
-                if (unifiedFiles.isNotEmpty()) {
-                    val targetFile = unifiedFiles.maxByOrNull { it.length() }!!
-                    if (targetFile.length() < 150 * 1024) {
-                        runOnUiThread {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Buffering initial media stream. Please wait 3 seconds and click Play again.",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                        return "Buffering"
-                    }
-                    val uri = FileUtils.getContentUriForFile(this@MainActivity, targetFile)
-                    val mime = FileUtils.getMimeType(targetFile.name)
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, mime)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    startActivity(Intent.createChooser(intent, "Play Media"))
+                if (streamCandidate.exists() && streamCandidate.length() >= 250 * 1024) {
+                    launchInAppPlayer(jobId, streamCandidate.absolutePath, activeItem?.title ?: "Playing Media")
                     return "OK"
                 }
 
-                val hasPartFile = candidates.any { f ->
-                    val name = f.name.lowercase()
-                    name.endsWith(".part") || name.endsWith(".ytdl") || name.endsWith(".temp")
-                }
-
-                // Check if video DASH stream file exists
-                val videoStreamFiles = candidates.filter { f ->
-                    val name = f.name.lowercase()
-                    name.endsWith(".mp4") &&
-                        !name.endsWith(".part") &&
-                        !name.endsWith(".ytdl") &&
-                        !name.endsWith(".temp")
-                }
-
-                if (videoStreamFiles.isNotEmpty()) {
-                    val targetFile = videoStreamFiles.maxByOrNull { it.length() }!!
-                    if (targetFile.length() < 150 * 1024) {
-                        runOnUiThread {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Buffering video stream. Please wait 3 seconds and click Play again.",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                        return "Buffering"
-                    }
-                    val uri = FileUtils.getContentUriForFile(this@MainActivity, targetFile)
-                    val mime = FileUtils.getMimeType(targetFile.name)
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, mime)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    runOnUiThread {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Playing downloaded video stream (audio will merge upon download completion).",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    startActivity(Intent.createChooser(intent, "Play Media"))
-                    return "OK"
-                }
-
-                val playableFiles = candidates.filter { f ->
-                    val name = f.name.lowercase()
-                    !name.endsWith(".part") && !name.endsWith(".ytdl") && !name.endsWith(".temp") && !name.endsWith(".fs.mp4")
-                }
-
-                if (playableFiles.isNotEmpty()) {
-                    val targetFile = playableFiles.maxByOrNull { it.length() }!!
-                    if (targetFile.length() < 150 * 1024) {
-                        runOnUiThread {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Buffering initial media stream. Please wait 3 seconds and click Play again.",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                        return "Buffering"
-                    }
-
-                    val uri = FileUtils.getContentUriForFile(this@MainActivity, targetFile)
-                    val mime = FileUtils.getMimeType(targetFile.name)
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, mime)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    startActivity(Intent.createChooser(intent, "Play Media"))
-                    return "OK"
-                }
+                // 4. Check if standard .part file exists
+                val hasPartFile = dlDir.listFiles { _, name ->
+                    name.startsWith(jobId) && name.endsWith(".part")
+                }?.isNotEmpty() == true
 
                 runOnUiThread {
                     if (hasPartFile) {
                         Toast.makeText(
                             this@MainActivity,
-                            "This download is saving in standard mode as an incomplete (.part) file. Standard temporary files cannot be played while downloading.",
+                            "Audio and video will merge upon full download completion.",
                             Toast.LENGTH_LONG
                         ).show()
                     } else {
@@ -615,13 +526,7 @@ class MainActivity : ComponentActivity() {
                     }
                     return
                 }
-                val uri = FileUtils.getContentUriForFile(this@MainActivity, file)
-                val mime = FileUtils.getMimeType(file.name)
-                val intent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(uri, mime)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                startActivity(Intent.createChooser(intent, "Play Media"))
+                launchInAppPlayer("", file.absolutePath, file.nameWithoutExtension)
             } catch (e: Exception) {
                 runOnUiThread {
                     Toast.makeText(this@MainActivity, "Could not open media: ${e.message}", Toast.LENGTH_SHORT).show()
