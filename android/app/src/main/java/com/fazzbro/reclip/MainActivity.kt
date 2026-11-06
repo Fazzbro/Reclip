@@ -117,7 +117,7 @@ class MainActivity : ComponentActivity() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     pendingSharedUrl?.let { shared ->
-                        view?.evaluateJavascript("window.onAndroidUrlReceived('$shared');", null)
+                        sendUrlToWeb(shared)
                         pendingSharedUrl = null
                     }
                 }
@@ -145,21 +145,56 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         handleIncomingIntent(intent)
-        pendingSharedUrl?.let { shared ->
-            webView.evaluateJavascript("window.onAndroidUrlReceived('$shared');", null)
-            pendingSharedUrl = null
-        }
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
-        if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
-            val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
-            val urlPattern = Regex("https?://[^\\s]+")
-            val match = urlPattern.find(text)
-            if (match != null) {
-                pendingSharedUrl = match.value
+        if (intent == null) return
+        val action = intent.action
+        val isSend = action == Intent.ACTION_SEND
+        val isView = action == Intent.ACTION_VIEW
+
+        if (!isSend && !isView) return
+
+        var rawText: String? = null
+
+        if (isSend) {
+            rawText = intent.getStringExtra(Intent.EXTRA_TEXT)
+                ?: intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+                ?: intent.getStringExtra(Intent.EXTRA_SUBJECT)
+                ?: intent.dataString
+                ?: intent.clipData?.let { clip ->
+                    if (clip.itemCount > 0) clip.getItemAt(0).text?.toString() ?: clip.getItemAt(0).uri?.toString() else null
+                }
+        } else if (isView) {
+            rawText = intent.dataString
+        }
+
+        if (rawText.isNullOrBlank()) return
+
+        // Extract first URL using regex
+        val urlPattern = Regex("https?://[^\\s]+")
+        val match = urlPattern.find(rawText)
+        if (match != null) {
+            var extracted = match.value.trim()
+            extracted = extracted.trimEnd { it in ")]}>.,;?!\"'" }
+            if (extracted.isNotBlank()) {
+                Log.d("ReClipShare", "Received shared URL: $extracted")
+                pendingSharedUrl = extracted
+                sendUrlToWeb(extracted)
             }
+        }
+    }
+
+    private fun sendUrlToWeb(url: String) {
+        if (!::webView.isInitialized) return
+        val safeJson = JSONObject.quote(url)
+        runOnUiThread {
+            webView.evaluateJavascript(
+                "(function() { if (typeof window.onAndroidUrlReceived === 'function') { window.onAndroidUrlReceived(" + safeJson + "); } else { window.__pendingAndroidUrl = " + safeJson + "; } })();",
+                null
+            )
         }
     }
 
@@ -192,6 +227,13 @@ class MainActivity : ComponentActivity() {
     }
 
     inner class WebAppInterface {
+
+        @JavascriptInterface
+        fun getPendingSharedUrl(): String {
+            val url = pendingSharedUrl ?: ""
+            pendingSharedUrl = null
+            return url
+        }
 
         @JavascriptInterface
         fun fetchInfoAsync(url: String, callbackId: String) {

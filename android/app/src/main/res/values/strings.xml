@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">ReClip</string>
+    <string name="share_to_reclip">Download with ReClip</string>
 </resources>

@@ -186,6 +186,14 @@ export default function App() {
 
     });
 
+    const initialSharedUrl = nativeBridge.getPendingSharedUrl();
+    if (initialSharedUrl) {
+      setUrlInput(initialSharedUrl);
+      setActiveTab('home');
+      setTabIndex(0);
+      handleFetch(initialSharedUrl);
+    }
+
 
 
     // Listen for live download progress updates from Android service

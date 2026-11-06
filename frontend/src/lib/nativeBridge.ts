@@ -68,6 +68,7 @@ declare global {
       saveCookies: (content: string) => boolean;
       clearCookies: () => boolean;
       updateYtDlp: () => string;
+      getPendingSharedUrl?: () => string;
       onUrlReceived?: (url: string) => void;
       onDownloadProgress?: (itemJson: string) => void;
       onFetchInfoCallback?: (callbackId: string, resultJson: string) => void;
@@ -77,6 +78,7 @@ declare global {
 
 class NativeBridgeService {
   private progressListeners: ((item: DownloadItem) => void)[] = [];
+  private pendingUrl: string | null = null;
   private urlListeners: ((url: string) => void)[] = [];
 
   constructor() {
@@ -92,7 +94,11 @@ class NativeBridgeService {
       };
 
       (window as any).onAndroidUrlReceived = (url: string) => {
-        this.urlListeners.forEach((fn) => fn(url));
+        if (this.urlListeners.length > 0) {
+          this.urlListeners.forEach((fn) => fn(url));
+        } else {
+          this.pendingUrl = url;
+        }
       };
 
       (window as any).onFetchInfoCallback = (callbackId: string, resultJson: string) => {
@@ -381,9 +387,35 @@ class NativeBridgeService {
 
   onUrlReceived(listener: (url: string) => void) {
     this.urlListeners.push(listener);
+    if (this.pendingUrl) {
+      const url = this.pendingUrl;
+      this.pendingUrl = null;
+      listener(url);
+    } else if (typeof window !== 'undefined' && (window as any).__pendingAndroidUrl) {
+      const url = (window as any).__pendingAndroidUrl;
+      (window as any).__pendingAndroidUrl = null;
+      listener(url);
+    }
     return () => {
       this.urlListeners = this.urlListeners.filter((l) => l !== listener);
     };
+  }
+
+  getPendingSharedUrl(): string {
+    if (this.pendingUrl) {
+      const url = this.pendingUrl;
+      this.pendingUrl = null;
+      return url;
+    }
+    if (this.isAndroidApp() && window.AndroidBridge?.getPendingSharedUrl) {
+      return window.AndroidBridge.getPendingSharedUrl() || '';
+    }
+    if (typeof window !== 'undefined' && (window as any).__pendingAndroidUrl) {
+      const url = (window as any).__pendingAndroidUrl;
+      (window as any).__pendingAndroidUrl = null;
+      return url;
+    }
+    return '';
   }
 }
 

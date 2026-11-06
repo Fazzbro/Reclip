@@ -22,6 +22,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:windowSoftInputMode="adjustPan|stateHidden"
             android:theme="@style/Theme.ReClip">
             <intent-filter>
@@ -29,11 +30,39 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Support sharing URLs from YouTube, Twitter, Instagram, TikTok, etc. directly into ReClip -->
-            <intent-filter>
+            <!-- Support sharing URLs from YouTube, Instagram, TikTok, Twitter/X, Reddit directly into ReClip -->
+            <intent-filter android:label="@string/share_to_reclip">
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
+            </intent-filter>
+
+            <intent-filter android:label="@string/share_to_reclip">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+            </intent-filter>
+
+            <!-- Support direct link opening via ACTION_VIEW -->
+            <intent-filter android:label="@string/share_to_reclip">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="www.youtube.com" />
+                <data android:host="m.youtube.com" />
+                <data android:host="youtu.be" />
+                <data android:host="youtube.com" />
+                <data android:host="www.instagram.com" />
+                <data android:host="instagram.com" />
+                <data android:host="www.tiktok.com" />
+                <data android:host="tiktok.com" />
+                <data android:host="vt.tiktok.com" />
+                <data android:host="twitter.com" />
+                <data android:host="x.com" />
+                <data android:host="www.reddit.com" />
+                <data android:host="reddit.com" />
             </intent-filter>
         </activity>
 
